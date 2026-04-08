@@ -1,0 +1,24 @@
+{
+  "chrome": {
+    "path": {
+      "macos": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "linux": "/usr/bin/google-chrome",
+      "windows": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+    },
+    "port": 9222,
+    "user_data_dir": "~/.claude/xianyu-chrome-profile"
+  },
+  "storage": {
+    "data_root": "~/.claude/xianyu-data/users",
+    "user_id": "default",
+    "token_file": "",
+    "chrome_user_data_dir": ""
+  },
+  "keepalive": {
+    "enabled": true,
+    "interval_minutes": 10
+  },
+  "search": {
+    "max_stale_pages": 3
+  }
+}

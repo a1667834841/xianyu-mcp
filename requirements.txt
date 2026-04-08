@@ -1,0 +1,24 @@
+# 闲鱼助手依赖
+
+# 浏览器自动化
+playwright>=1.40.0
+
+# HTTP 请求
+requests>=2.31.0
+
+# MCP Server
+mcp>=1.0.0
+
+# 数据处理
+# (Python 标准库已足够)
+
+# 二维码生成
+qrcode[pil]>=7.4.2
+
+# Cloudflare R2 对象存储
+boto3>=1.34.0
+
+# 测试依赖 (可选)
+# pytest>=7.0.0
+# pytest-html>=4.0.0
+# pytest-cov>=4.0.0

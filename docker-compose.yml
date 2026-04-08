@@ -1,0 +1,63 @@
+services:
+  # 浏览器服务
+  browser:
+    image: registry.cn-hangzhou.aliyuncs.com/ggball/chrome-headless-shell-zh:latest
+    container_name: xianyu-browser
+    restart: unless-stopped
+    ports:
+      - "9222:9222"
+    environment:
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1}
+      - XIANYU_USER_ID=${XIANYU_USER_ID:-default}
+    command:
+      - --user-data-dir=/data/users/${XIANYU_USER_ID:-default}/chrome-profile
+      - --disable-dev-shm-usage
+    volumes:
+      - ${XIANYU_HOST_DATA_DIR:-./data}/users/${XIANYU_USER_ID:-default}/chrome-profile:/data/users/${XIANYU_USER_ID:-default}/chrome-profile
+    shm_size: 2g
+    networks:
+      - xianyu-net
+
+  # MCP服务
+  mcp-server:
+    image: ${XIANYU_MCP_IMAGE:-registry.cn-hangzhou.aliyuncs.com/ggball/xianyu-mcp:latest}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: xianyu-mcp
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - CDP_HOST=${CDP_HOST:-browser}
+      - CDP_PORT=${CDP_PORT:-9222}
+      - MCP_HOST=${MCP_HOST:-0.0.0.0}
+      - MCP_PORT=${MCP_PORT:-8080}
+      - XIANYU_DATA_ROOT=/data/users
+      - XIANYU_USER_ID=${XIANYU_USER_ID:-default}
+      - XIANYU_KEEPALIVE_ENABLED=${XIANYU_KEEPALIVE_ENABLED:-true}
+      - XIANYU_KEEPALIVE_INTERVAL_MINUTES=${XIANYU_KEEPALIVE_INTERVAL_MINUTES:-10}
+      - XIANYU_SEARCH_MAX_STALE_PAGES=${XIANYU_SEARCH_MAX_STALE_PAGES:-3}
+      - CF_ACCOUNT_ID=${CF_ACCOUNT_ID:-}
+      - CF_ACCESS_KEY_ID=${CF_ACCESS_KEY_ID:-}
+      - CF_SECRET_ACCESS_KEY=${CF_SECRET_ACCESS_KEY:-}
+      - CF_BUCKET_NAME=${CF_BUCKET_NAME:-blog}
+      - CF_PUBLIC_DOMAIN=${CF_PUBLIC_DOMAIN:-https://img.ggball.top}
+    volumes:
+      - ${XIANYU_HOST_DATA_DIR:-./data}/users/${XIANYU_USER_ID:-default}/tokens:/data/users/${XIANYU_USER_ID:-default}/tokens
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f -s --max-time 3 http://localhost:8080/sse | head -1 | grep -q 'event: endpoint' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      - browser
+    networks:
+      - xianyu-net
+
+networks:
+  xianyu-net:
+    driver: bridge
