@@ -576,7 +576,7 @@ Expected: FAIL - "cannot import CopiedItem"
 
 - [ ] **Step 7: 从core.py提取CopiedItem到publish.py**
 
-Read `src/core.py` lines 66-82 to get exact CopiedItem definition.
+以下是完整的CopiedItem数据类实现,可直接使用:
 
 ```python
 # src/models/publish.py
@@ -968,7 +968,7 @@ Expected: 部分测试通过(HTTP API相关)
 
 Expected: PASS
 
-- [ ] **Step 5: 完善SearchService实现**
+- [ ] **Step 6: 完善SearchService实现**
 
 从core.py完整迁移search方法逻辑,包括:
 - HTTP API优先搜索
@@ -978,7 +978,7 @@ Expected: PASS
 
 Read `src/core.py` lines 200-600 and extract full search logic.
 
-- [ ] **Step 6: 运行测试验证完整功能**
+- [ ] **Step 7: 运行测试验证完整功能**
 
 ```bash
 pytest tests/services/search/test_service.py -v
@@ -986,7 +986,7 @@ pytest tests/services/search/test_service.py -v
 
 Expected: 所有测试通过
 
-- [ ] **Step 7: 提交SearchService**
+- [ ] **Step 8: 提交SearchService**
 
 ```bash
 git add src/services/search/service.py tests/services/search/test_service.py
