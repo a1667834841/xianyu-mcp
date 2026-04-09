@@ -33,7 +33,6 @@ venv/
 
 #文档 - 归档目录
 docs/superpowers/archive/
-docs/superpowers/plans/
 
 # git worktrees
 .worktrees/
