@@ -53,10 +53,10 @@ src/
 │   │
 │   ├── session/        # 会话服务模块
 │   │   ├── __init__.py
-│   │   ├── manager.py         # SessionManager核心
-│   │   ├── login.py           # 登录逻辑(login函数)
-│   │   ├── token.py           # Token刷新逻辑(refresh_token)
-│   │   └── keepalive.py       # 保活服务
+│   │   ├── session_manager.py  # SessionManager核心
+│   │   ├── login_handler.py    # 登录逻辑(login函数)
+│   │   ├── token_manager.py    # Token刷新逻辑(refresh_token)
+│   │   └── keepalive_service.py # 保活服务
 │   │
 │   ├── publish/        # 发布服务模块
 │   │   ├── __init__.py
@@ -124,6 +124,16 @@ src/
 - **阶段4**: 验证清理 - 运行测试确保核心功能不受影响
 - **阶段5**: 更新README - 同步更新文档,移除废弃功能说明
 
+**子代理分工:**
+
+- **src代理**: 扫描src目录所有函数,标记未被import的函数
+- **tests代理**: 识别未运行的测试、重复测试、测试已废弃功能的测试
+- **docs代理**: 对比specs目录与已实现功能,识别过时文档
+
+**输出格式:**
+
+每个子代理输出JSON格式的排查结果,包含:文件路径、代码片段、未使用原因、建议操作(删除/保留/归档)。
+
 **清理验证标准:**
 
 - 核心功能测试必须100%通过
@@ -166,6 +176,10 @@ core.py拆分后:
 - 保持功能独立性,减少交叉依赖
 - XianyuApp作为Facade模式,组合调用各Service
 
+**行数预估说明:**
+
+行数预估包含新增的空行、注释和导入语句,实际迁移时会根据具体代码调整。拆分后总行数可能略高于原文件,因为各模块需要独立的导入语句和文档注释。
+
 #### session.py (1063行) 拆分方案
 
 **拆分目标:**
@@ -180,10 +194,10 @@ core.py拆分后:
 ```
 session.py拆分后:
 ├── services/session/
-│   ├── manager.py            (~500行) - SessionManager核心,cookie管理
-│   ├── login.py              (~250行) - login函数,二维码登录流程
-│   ├── token.py              (~200行) - refresh_token, check_cookie_valid
-│   └── keepalive.py          (~95行)  - 保活服务(迁移进来)
+│   ├── session_manager.py     (~500行) - SessionManager核心,cookie管理
+│   ├── login_handler.py       (~250行) - login函数,二维码登录流程
+│   ├── token_manager.py       (~200行) - refresh_token, check_cookie_valid
+│   └── keepalive_service.py   (~95行)  - 保活服务(迁移进来)
 ```
 
 **拆分原则:**
@@ -242,7 +256,8 @@ tests/
 │   │   └── test_keepalive.py
 │   ├── publish/
 │   │   ├── test_service.py
-│   │   └── test_detail_fetcher.py
+│   │   ├── test_detail_fetcher.py
+│   │   └── test_copier.py
 │   └── test_browser.py
 │
 ├── api/                 # 接口层测试
@@ -268,6 +283,7 @@ tests/
 **验证:**
 - 目录结构符合设计
 - `__init__.py` 文件创建完成
+- 现有测试通过率保持100%
 - 运行现有测试,确保无影响
 
 ### 阶段2: 代码迁移与拆分
@@ -283,6 +299,7 @@ tests/
 - 运行测试,补充缺失的单测
 - 所有导入关系正确
 - 核心功能可正常调用
+- 代码覆盖率不低于80%,新增单测覆盖迁移代码的90%
 
 ### 阶段3: 清理未使用代码
 
@@ -296,6 +313,7 @@ tests/
 - 运行完整测试套件
 - 测试覆盖率不低于重构前
 - 导入关系无断裂
+- 删除代码量占比不超过总代码量的15%
 
 ### 阶段4: 统一命名与文档更新
 
@@ -309,6 +327,20 @@ tests/
 - 文件命名符合PEP8规范
 - 测试文件与被测模块一一对应
 - README文档准确反映新结构
+- 命名规范符合率100%(通过ruff lint检查)
+
+---
+
+### 回滚策略
+
+若某阶段验证失败,执行以下回滚:
+
+- **阶段1失败**: 删除新建目录,保持现状
+- **阶段2失败**: 恢复原始文件(core.py, session.py),删除新模块
+- **阶段3失败**: 从git恢复被删除的文件
+- **阶段4失败**: 重命名回原始文件名
+
+所有阶段均基于git分支进行,确保可回滚。建议创建 `refactor-structure` 分支进行重构,完成后合并回master。
 
 ---
 
@@ -344,6 +376,25 @@ services/session/manager.py
 - `tests/services/search/test_service.py` → 测试 `services/search/service.py`
 - `tests/api/test_app.py` → 测试 `api/app.py`
 
+### 避免循环依赖
+
+**禁止的依赖:**
+- `services/search` → `services/publish` 的直接导入
+- `services/session` 依赖任何其他 `services` 模块
+- 同层services模块之间的相互依赖
+
+**允许的依赖:**
+- `services` 模块依赖 `models` 和 `utils`
+- `api` 层依赖所有下层模块
+- 测试模块依赖被测模块和fixtures
+
+**检查方法:**
+
+使用 `pydeps` 或 `import-deps` 工具验证依赖图无环:
+```bash
+pydeps src --no-output --show-cycles
+```
+
 ---
 
 ## 五、风险与对策
@@ -355,7 +406,7 @@ services/session/manager.py
 - 每阶段运行测试验证
 - 保留原导入路径一段时间,逐步迁移
 
-### 集险2: 测试覆盖不足
+### 风险2: 测试覆盖不足
 
 **对策:**
 - 每阶段强制补充单测
