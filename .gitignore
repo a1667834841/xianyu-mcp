@@ -31,8 +31,9 @@ venv/
 *.tmp
 .DS_Store
 
-#文档
-docs/superpowers/
+#文档 - 归档目录
+docs/superpowers/archive/
+docs/superpowers/plans/
 
 # git worktrees
 .worktrees/
