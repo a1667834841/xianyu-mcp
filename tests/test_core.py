@@ -1,15 +1,15 @@
 """
 测试 core 模块 - 搜索和发布功能
 """
+
 import asyncio
 import sys
 from pathlib import Path
 
-# 添加 src 目录到 Python 路径
-src_path = Path(__file__).parent.parent / "src"
-sys.path.insert(0, str(src_path))
+project_root = Path(__file__).parent.parent.resolve()
+sys.path.insert(0, str(project_root))
 
-from core import XianyuApp, _ItemCopierImpl, SearchItem
+from src.core import XianyuApp, _ItemCopierImpl, SearchItem
 
 
 async def test_search_no_duplicates():
@@ -45,13 +45,19 @@ async def test_search_no_duplicates():
                 print(f"  - {dup_id}: 出现 {count} 次")
 
         # 验证结果
-        assert len(items) <= target_count, f"返回数量 {len(items)} 超过请求数量 {target_count}"
-        assert len(item_ids) == len(unique_ids), f"发现 {len(item_ids) - len(unique_ids)} 个重复商品"
+        assert len(items) <= target_count, (
+            f"返回数量 {len(items)} 超过请求数量 {target_count}"
+        )
+        assert len(item_ids) == len(unique_ids), (
+            f"发现 {len(item_ids) - len(unique_ids)} 个重复商品"
+        )
 
         # 打印部分结果
         print(f"\n前 5 个商品:")
         for i, item in enumerate(items[:5]):
-            print(f"  {i+1}. {item.title[:30]}... - ¥{item.price} (ID: {item.item_id})")
+            print(
+                f"  {i + 1}. {item.title[:30]}... - ¥{item.price} (ID: {item.item_id})"
+            )
 
         print(f"\n✓ 测试通过：返回 {len(items)} 条商品，无重复")
         return items
@@ -82,11 +88,7 @@ async def test_search_with_filters():
         print(f"\n=== 测试带筛选搜索 ===")
 
         items = await app.search(
-            "键盘",
-            rows=20,
-            min_price=50,
-            max_price=200,
-            free_ship=True
+            "键盘", rows=20, min_price=50, max_price=200, free_ship=True
         )
 
         print(f"请求 20 条（50-200 元，包邮），返回 {len(items)} 条")
@@ -140,19 +142,16 @@ async def test_publish_from_item():
         print(f"\n=== 测试复制发布 ===")
         print(f"对标商品：{item_url}")
 
-        result = await app.publish(
-            item_url,
-            new_price=95.0,
-            condition="全新"
-        )
+        result = await app.publish(item_url, new_price=95.0, condition="全新")
 
         import sys
+
         sys.stdout.flush()
         print(f"\n发布结果：success={result.get('success')}")
-        if result.get('success'):
+        if result.get("success"):
             print("表单填充完成，请检查浏览器窗口")
-            if result.get('item_data'):
-                item_data = result['item_data']
+            if result.get("item_data"):
+                item_data = result["item_data"]
                 print(f"  标题：{item_data.get('title', '')[:50]}...")
                 print(f"  价格：¥{item_data.get('min_price')}")
                 print(f"  图片数量：{len(item_data.get('image_urls', []))} 张")

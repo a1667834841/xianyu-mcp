@@ -21,6 +21,7 @@ except ImportError:
 def get_platform() -> str:
     """获取当前平台名称"""
     import sys
+
     if sys.platform == "darwin":
         return "macos"
     elif sys.platform == "win32":
@@ -50,10 +51,10 @@ def load_config(auto_create: bool = True) -> Dict:
             "path": {
                 "macos": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
                 "linux": "/usr/bin/google-chrome",
-                "windows": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+                "windows": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
             },
             "port": 9222,
-            "user_data_dir": str(Path.home() / ".claude" / "xianyu-chrome-profile")
+            "user_data_dir": str(Path.home() / ".claude" / "xianyu-chrome-profile"),
         }
     }
 
@@ -101,7 +102,9 @@ def load_config(auto_create: bool = True) -> Dict:
     return default_config
 
 
-def get_chrome_path(config: Optional[Dict] = None, platform: Optional[str] = None) -> str:
+def get_chrome_path(
+    config: Optional[Dict] = None, platform: Optional[str] = None
+) -> str:
     """
     获取 Chrome 浏览器路径
 
@@ -145,7 +148,7 @@ def get_chrome_path(config: Optional[Dict] = None, platform: Optional[str] = Non
         "windows": [
             "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
             "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-        ]
+        ],
     }
 
     for path in default_paths.get(platform, []):
@@ -188,9 +191,7 @@ class AsyncChromeManager:
             else self.DEFAULT_USER_DATA_DIR
         )
         preferred_dir = (
-            user_data_dir
-            or self.settings.storage.chrome_user_data_dir
-            or fallback_dir
+            user_data_dir or self.settings.storage.chrome_user_data_dir or fallback_dir
         )
         self.user_data_dir = Path(preferred_dir).expanduser()
         self.headless = headless
@@ -204,6 +205,12 @@ class AsyncChromeManager:
         self.context: Optional[BrowserContext] = None
         self._work_page: Optional[Page] = None
         self._keepalive_page: Optional[Page] = None
+        self._search_page: Optional[Page] = None
+        self._session_page: Optional[Page] = None
+        self._publish_page: Optional[Page] = None
+        self._search_page_lock = asyncio.Lock()
+        self._session_page_lock = asyncio.Lock()
+        self._publish_page_lock = asyncio.Lock()
         self.page: Optional[Page] = None
 
         # 创建用户数据目录
@@ -249,7 +256,7 @@ class AsyncChromeManager:
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                start_new_session=True
+                start_new_session=True,
             )
 
             # 等待浏览器启动
@@ -257,9 +264,10 @@ class AsyncChromeManager:
             while time.time() - start_time < timeout:
                 try:
                     import socket
+
                     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     sock.settimeout(1)
-                    result = sock.connect_ex(('localhost', self.port))
+                    result = sock.connect_ex(("localhost", self.port))
                     sock.close()
                     if result == 0:
                         print(f"[Browser] Chrome 已启动在端口 {self.port}")
@@ -300,6 +308,9 @@ class AsyncChromeManager:
             )
 
             self._keepalive_page = None
+            self._search_page = None
+            self._session_page = None
+            self._publish_page = None
 
             if self.context.pages:
                 self._work_page = self.context.pages[0]
@@ -316,12 +327,7 @@ class AsyncChromeManager:
             return False
 
     def _has_active_connection(self) -> bool:
-        return bool(
-            self.browser
-            and self.context
-            and self._work_page
-            and self.page
-        )
+        return bool(self.browser and self.context and self._work_page and self.page)
 
     async def _get_websocket_url(self) -> Optional[str]:
         """
@@ -332,6 +338,7 @@ class AsyncChromeManager:
         """
         try:
             import urllib.request
+            import urllib.parse
             import json
             import socket
 
@@ -349,11 +356,20 @@ class AsyncChromeManager:
             with urllib.request.urlopen(req, timeout=5) as response:
                 data = json.loads(response.read().decode())
                 ws_url = data.get("webSocketDebuggerUrl")
-                # 替换 WebSocket URL 中的主机名为实际主机（带端口）
-                # Chrome返回的URL可能是 ws://localhost/devtools/browser/xxx（无端口）
-                # 需要替换为 ws://target_host:port/devtools/browser/xxx
-                if ws_url and self.host not in ("localhost", "127.0.0.1"):
-                    ws_url = ws_url.replace("127.0.0.1", f"{target_host}:{self.port}").replace("localhost", f"{target_host}:{self.port}")
+                if ws_url:
+                    parsed = urllib.parse.urlsplit(ws_url)
+                    hostname = parsed.hostname
+                    port = parsed.port
+
+                    if hostname and port is None:
+                        replacement_host = (
+                            target_host
+                            if self.host not in ("localhost", "127.0.0.1")
+                            else hostname
+                        )
+                        ws_url = urllib.parse.urlunsplit(
+                            parsed._replace(netloc=f"{replacement_host}:{self.port}")
+                        )
                 return ws_url
         except Exception as e:
             print(f"[Browser] 获取 WebSocket URL 失败：{e}")
@@ -425,7 +441,11 @@ class AsyncChromeManager:
         """
         获取保活页，与工作页保持区分
         """
-        if self._keepalive_page and self.context and self._keepalive_page in self.context.pages:
+        if (
+            self._keepalive_page
+            and self.context
+            and self._keepalive_page in self.context.pages
+        ):
             return self._keepalive_page
 
         await self.get_work_page()
@@ -435,28 +455,103 @@ class AsyncChromeManager:
         self._keepalive_page = await self.context.new_page()
         return self._keepalive_page
 
-    async def navigate(self, url: str, wait_until: str = "networkidle") -> bool:
+    async def get_search_page(self) -> Page:
+        """获取搜索角色页。"""
+        if (
+            self._search_page
+            and self.context
+            and self._search_page in self.context.pages
+        ):
+            return self._search_page
+
+        if not self.context:
+            raise RuntimeError("[Browser] 无法获取搜索页面：上下文未初始化")
+
+        async with self._search_page_lock:
+            if (
+                self._search_page
+                and self.context
+                and self._search_page in self.context.pages
+            ):
+                return self._search_page
+
+            self._search_page = await self.context.new_page()
+        return self._search_page
+
+    async def get_session_page(self) -> Page:
+        """获取会话角色页。"""
+        if (
+            self._session_page
+            and self.context
+            and self._session_page in self.context.pages
+        ):
+            return self._session_page
+
+        if not self.context:
+            raise RuntimeError("[Browser] 无法获取会话页面：上下文未初始化")
+
+        async with self._session_page_lock:
+            if (
+                self._session_page
+                and self.context
+                and self._session_page in self.context.pages
+            ):
+                return self._session_page
+
+            self._session_page = await self.context.new_page()
+        return self._session_page
+
+    async def get_publish_page(self) -> Page:
+        """获取发布角色页。"""
+        if (
+            self._publish_page
+            and self.context
+            and self._publish_page in self.context.pages
+        ):
+            return self._publish_page
+
+        if not self.context:
+            raise RuntimeError("[Browser] 无法获取发布页面：上下文未初始化")
+
+        async with self._publish_page_lock:
+            if (
+                self._publish_page
+                and self.context
+                and self._publish_page in self.context.pages
+            ):
+                return self._publish_page
+
+            self._publish_page = await self.context.new_page()
+        return self._publish_page
+
+    async def navigate(
+        self, url: str, wait_until: str = "networkidle", page=None
+    ) -> bool:
         """
         导航到 URL
 
         Args:
             url: 目标 URL
             wait_until: 等待条件 (load/domcontentloaded/networkidle/commit)
+            page: 可选的目标页面；未传时默认使用 self.page
 
         Returns:
             bool: 是否成功
         """
-        if not self.page:
+        target_page = self.page if page is None else page
+        if target_page is None:
             return False
 
         try:
-            await self.page.goto(url, wait_until=wait_until, timeout=30000)
+            await target_page.goto(url, wait_until=wait_until, timeout=30000)
             return True
         except Exception as e:
             print(f"[Browser] 导航失败：{e}")
             return False
 
-    async def get_cookie(self, name: str, domain: str = ".goofish.com") -> Optional[str]:
+    async def get_cookie(
+        self, name: str, domain: str = ".goofish.com"
+    ) -> Optional[str]:
         """
         获取 Cookie
 
@@ -526,18 +621,34 @@ class AsyncChromeManager:
 
     async def close(self):
         """关闭浏览器连接"""
-        if self.browser:
-            await self.browser.close()
+        close_error = None
+        try:
+            if self.browser:
+                await self.browser.close()
+        except Exception as e:
+            close_error = e
+        finally:
             self.browser = None
-        if self.context:
             self.context = None
-        self._work_page = None
-        self._keepalive_page = None
-        self.page = None
-        if self.playwright:
-            await self.playwright.stop()
+            self._work_page = None
+            self._keepalive_page = None
+            self._search_page = None
+            self._session_page = None
+            self._publish_page = None
+            self.page = None
+            playwright = self.playwright
             self.playwright = None
+
+            if playwright:
+                try:
+                    await playwright.stop()
+                except Exception as e:
+                    if close_error is None:
+                        close_error = e
+
         print("[Browser] 已关闭连接")
+        if close_error is not None:
+            raise close_error
 
     async def __aenter__(self):
         """异步上下文管理器入口"""

@@ -198,6 +198,12 @@ class SessionManager:
         """异步上下文管理器出口"""
         await self.chrome_manager.close()
 
+    async def _ensure_session_page(self):
+        """显式切换到会话角色页，避免复用搜索/发布页。"""
+        page = await self.chrome_manager.get_session_page()
+        self.chrome_manager.page = page
+        return page
+
     async def refresh_token(self) -> Optional[Dict[str, str]]:
         """
         刷新 token - 通过访问闲鱼首页获取最新 token
@@ -212,9 +218,11 @@ class SessionManager:
                 print("[Session] 浏览器启动失败")
                 return None
 
+            page = await self._ensure_session_page()
+
             # 导航到闲鱼首页
             print("[Session] 正在刷新 token...")
-            await self.chrome_manager.navigate("https://www.goofish.com")
+            await self.chrome_manager.navigate("https://www.goofish.com", page=page)
 
             # 等待页面加载
             import asyncio
@@ -260,9 +268,11 @@ class SessionManager:
                 print("[Session] 浏览器未运行")
                 return False
 
+            page = await self._ensure_session_page()
+
             # 导航到闲鱼首页确保 cookie 是最新的
             print("[Session] 正在检查 cookie 有效性...")
-            await self.chrome_manager.navigate("https://www.goofish.com")
+            await self.chrome_manager.navigate("https://www.goofish.com", page=page)
 
             import asyncio
 
@@ -379,6 +389,29 @@ class SessionManager:
             print(f"[Session] 检查 cookie 失败：{e}")
             return False
 
+    def _format_timestamp(self, value: Any) -> Optional[str]:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+
+    def get_cookie_status(self, is_valid: bool) -> Dict[str, Any]:
+        last_updated_at = None
+        if self.token_file.exists():
+            try:
+                cached = json.loads(self.token_file.read_text(encoding="utf-8"))
+                if isinstance(cached, dict):
+                    last_updated_at = self._format_timestamp(cached.get("updated_at"))
+            except Exception:
+                last_updated_at = None
+
+        return {
+            "valid": is_valid,
+            "last_updated_at": last_updated_at,
+        }
+
     async def get_token(self) -> Optional[str]:
         """
         获取当前 token
@@ -458,9 +491,7 @@ class SessionManager:
             existing: Dict[str, Any] = {}
             if self.token_file.exists():
                 try:
-                    existing = json.loads(
-                        self.token_file.read_text(encoding="utf-8")
-                    )
+                    existing = json.loads(self.token_file.read_text(encoding="utf-8"))
                 except Exception:
                     existing = {}
                 if not isinstance(existing, dict):
@@ -525,7 +556,7 @@ class SessionManager:
             return {"success": False, "message": "浏览器启动失败"}
 
         # 设置二维码 API 监听器（在导航之前）
-        page = self.chrome_manager.page
+        page = await self._ensure_session_page()
         if not page:
             return {"success": False, "message": "无法获取页面"}
 
@@ -562,7 +593,7 @@ class SessionManager:
 
         # 访问闲鱼首页
         print("[Session] 正在访问闲鱼首页...")
-        await self.chrome_manager.navigate("https://www.goofish.com")
+        await self.chrome_manager.navigate("https://www.goofish.com", page=page)
         await asyncio.sleep(2)
 
         if await self.check_login_status():
@@ -579,9 +610,7 @@ class SessionManager:
         # 未登录，尝试点击登录按钮触发二维码
         print("[Session] 未登录，正在获取二维码...")
         try:
-            login_btn = self.chrome_manager.page.locator(
-                "button", has_text="登录"
-            ).first
+            login_btn = page.locator("button", has_text="登录").first
             if await login_btn.is_visible():
                 await login_btn.click()
                 print("[Session] 已点击登录按钮")
@@ -699,7 +728,7 @@ class SessionManager:
 
             失败返回 None
         """
-        page = self.chrome_manager.page
+        page = await self._ensure_session_page()
         if not page:
             return None
 
@@ -766,7 +795,7 @@ class SessionManager:
         Returns:
             二维码数据包
         """
-        page = self.chrome_manager.page
+        page = await self._ensure_session_page()
         if not page:
             return None
 
@@ -920,6 +949,7 @@ class SessionManager:
     async def _show_qr_code(self):
         """获取并显示登录二维码（兼容旧方法）"""
         try:
+            page = await self._ensure_session_page()
             # 使用新的 _get_qr_code 方法
             qr_data = await self._get_qr_code()
 
@@ -940,9 +970,7 @@ class SessionManager:
             else:
                 print("[QR] 未找到二维码元素，请在浏览器窗口扫码")
                 try:
-                    await self.chrome_manager.page.screenshot(
-                        path="/tmp/xianyu-login.png"
-                    )
+                    await page.screenshot(path="/tmp/xianyu-login.png")
                     print("[QR] 已保存登录页面截图：/tmp/xianyu-login.png")
                 except:
                     pass

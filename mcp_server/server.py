@@ -316,12 +316,14 @@ async def handle_refresh_token(arguments: dict) -> types.CallToolResult:
 async def handle_check_session(arguments: dict) -> types.CallToolResult:
     """处理检查会话"""
     app = get_app()
-    is_valid = await app.check_session()
+    session_status = await app.check_session()
+    is_valid = session_status["valid"]
 
     response = {
         "success": True,
         "valid": is_valid,
         "message": "Cookie 有效" if is_valid else "Cookie 已过期，需要重新登录",
+        "last_updated_at": session_status.get("last_updated_at"),
     }
 
     return types.CallToolResult(

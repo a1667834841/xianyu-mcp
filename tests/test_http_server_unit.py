@@ -303,3 +303,40 @@ async def test_xianyu_search_returns_engine_metadata(monkeypatch):
     assert payload["engine_used"] == "page_api"
     assert payload["fallback_reason"] is None
     assert payload["pages_fetched"] == 1
+
+
+@pytest.mark.asyncio
+async def test_xianyu_check_session_returns_formatted_last_updated_at(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    class FakeAppWithSessionTime:
+        async def check_session(self):
+            return {
+                "valid": True,
+                "last_updated_at": "2026-04-09 15:16:17",
+            }
+
+    monkeypatch.setattr(http_server, "get_app", lambda: FakeAppWithSessionTime())
+
+    payload = json.loads(await http_server.xianyu_check_session())
+
+    assert payload["valid"] is True
+    assert payload["last_updated_at"] == "2026-04-09 15:16:17"
+
+
+@pytest.mark.asyncio
+async def test_xianyu_check_session_returns_null_when_last_updated_missing(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    class FakeAppWithoutSessionTime:
+        async def check_session(self):
+            return {"valid": False, "last_updated_at": None}
+
+    monkeypatch.setattr(http_server, "get_app", lambda: FakeAppWithoutSessionTime())
+
+    payload = json.loads(await http_server.xianyu_check_session())
+
+    assert payload["valid"] is False
+    assert payload["last_updated_at"] is None

@@ -202,12 +202,14 @@ async def xianyu_check_session() -> str:
     检查闲鱼 Cookie 是否有效。调用用户信息接口验证当前登录状态。
     """
     app = get_app()
-    is_valid = await app.check_session()
+    session_status = await app.check_session()
+    is_valid = session_status["valid"]
 
     response = {
         "success": True,
         "valid": is_valid,
         "message": "Cookie 有效" if is_valid else "Cookie 已过期，需要重新登录",
+        "last_updated_at": session_status.get("last_updated_at"),
     }
 
     return json.dumps(response, ensure_ascii=False)
@@ -250,12 +252,14 @@ if __name__ == "__main__":
         """REST endpoint: 检查会话"""
         try:
             app = get_app()
-            is_valid = await app.check_session()
+            session_status = await app.check_session()
+            is_valid = session_status["valid"]
             return JSONResponse(
                 {
                     "success": True,
                     "valid": is_valid,
                     "message": "Cookie 有效" if is_valid else "Cookie 已过期",
+                    "last_updated_at": session_status.get("last_updated_at"),
                 }
             )
         except Exception as e:

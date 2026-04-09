@@ -32,12 +32,18 @@ description: Use when managing Xianyu store via MCP tools - login, search produc
    - 先调用 `xianyu_check_session` 检查登录状态
    - 如果返回 `valid: false` 或提示 Cookie 过期，需要重新登录
 
-2. **未登录时的处理：**
+2. **搜索异常时，优先检查登录状态：**
+   - 如果出现以下现象，必须第一时间调用 `xianyu_check_session`，不要先猜测搜索逻辑、性能或页面结构问题
+   - 典型信号包括：搜索长时间无响应、明显变慢、返回空结果、页面被弹窗拦住、接口响应异常、浏览器看起来正常但搜索流程卡住
+   - 这类症状经常不是搜索本身坏了，而是登录态失效后页面交互和接口请求都变得不稳定
+   - 只有在 `xianyu_check_session` 确认 `valid: true` 后，才继续排查搜索逻辑本身
+
+3. **未登录时的处理：**
    - 当用户提示需要登录或检测到未登录状态时，必须调用 `xianyu_login`
    - **终端环境**：`xianyu_login` 会自动在终端显示 ASCII 二维码，用户直接扫码即可
    - **GUI 环境**：二维码会在浏览器中显示
 
-3. **扫码后确认：**
+4. **扫码后确认：**
    - 用户扫码后，调用 `xianyu_check_session` 确认登录成功
    - 登录成功后方可继续执行其他操作
 
@@ -370,7 +376,7 @@ description: Use when managing Xianyu store via MCP tools - login, search produc
 | 问题 | 解决方案 |
 |-----|---------|
 | 登录超时 | 检查 Chrome 是否启动（端口 9222） |
-| 搜索返回空 | 检查关键词是否正确，或尝试其他关键词 |
+| 搜索返回空/很慢/卡住 | **先调用 `xianyu_check_session` 检查是否已掉登录**，确认 `valid: true` 后再排查关键词或搜索逻辑 |
 | 发布失败 | 检查商品链接格式是否正确 |
 | Token 过期 | 调用 xianyu_refresh_token 或重新登录 |
 | Cookie 无效 | 调用 xianyu_login 重新登录 |
@@ -382,3 +388,4 @@ description: Use when managing Xianyu store via MCP tools - login, search produc
 3. **发布频率** - 避免短时间大量发布，可能触发风控
 4. **特殊类目** - 潮玩盲盒等需要资质，会自动保存草稿
 5. **技能名称** - 本技能名称为 **xianyu-skill**
+6. **排查顺序** - 搜索问题先查登录态，再查关键词、页面结构、响应监听和性能；不要跳过 session 检查直接猜搜索逻辑故障

@@ -16,11 +16,13 @@ try:
     from .session import SessionManager
     from .settings import AppSettings, load_settings
     from .keepalive import CookieKeepaliveService
+    from .http_search import HttpApiSearchClient
 except ImportError:
     from browser import AsyncChromeManager
     from session import SessionManager
     from settings import AppSettings, load_settings
     from keepalive import CookieKeepaliveService
+    from http_search import HttpApiSearchClient
 
 
 logger = logging.getLogger(__name__)
@@ -121,7 +123,10 @@ class XianyuApp:
             pass
 
         self.session = SessionManager(self.browser, settings=resolved_settings)
-        self._work_lock = asyncio.Lock()
+        self._search_lock = asyncio.Lock()
+        self._session_lock = asyncio.Lock()
+        self._publish_lock = asyncio.Lock()
+        self._work_lock = self._search_lock
         keepalive = CookieKeepaliveService(
             browser=self.browser,
             session=self.session,
@@ -201,7 +206,8 @@ class XianyuApp:
             - qr_code: Dict (可选，未登录时返回)
             - message: str
         """
-        return await self.session.login(timeout=timeout)
+        async with self._session_lock:
+            return await self.session.login(timeout=timeout)
 
     async def show_qr_code(self) -> Optional[Dict[str, Any]]:
         """
@@ -216,15 +222,19 @@ class XianyuApp:
             - qr_code: Dict (仅未登录时返回)
             - message: str
         """
-        return await self.session.show_qr_code()
+        async with self._session_lock:
+            return await self.session.show_qr_code()
 
     async def refresh_token(self) -> Optional[Dict[str, str]]:
         """刷新 Token"""
-        return await self.session.refresh_token()
+        async with self._session_lock:
+            return await self.session.refresh_token()
 
-    async def check_session(self) -> bool:
-        """检查 Cookie 是否有效"""
-        return await self.session.check_cookie_valid()
+    async def check_session(self) -> Dict[str, Any]:
+        """检查 Cookie 是否有效，并返回最近更新时间。"""
+        async with self._session_lock:
+            is_valid = await self.session.check_cookie_valid()
+            return self.session.get_cookie_status(is_valid)
 
     # ==================== 搜索功能 ====================
 
@@ -234,14 +244,14 @@ class XianyuApp:
 
     async def search_with_meta(self, keyword: str, **options) -> SearchOutcome:
         """
-        搜索商品
+        搜索商品（使用 HTTP API）
 
         Args:
             keyword: 搜索关键词
             **options: 搜索选项 (rows, min_price, max_price, free_ship, sort_field, sort_order)
 
         Returns:
-            搜索结果列表
+            搜索结果
         """
         params = SearchParams(
             keyword=keyword,
@@ -253,49 +263,47 @@ class XianyuApp:
             sort_order=options.get("sort_order", ""),
         )
 
-        async with self._work_lock:
-            page = await self.browser.get_work_page()
-            self.browser.page = page
-            print(
-                f"[Search] 开始搜索 keyword={params.keyword!r} rows={params.rows} current_url={getattr(page, 'url', '')!r}",
-                flush=True,
-            )
+        print(
+            f"[Search] 开始 HTTP 搜索 keyword={params.keyword!r} rows={params.rows}",
+            flush=True,
+        )
 
-            try:
-                from .search_api import PageApiSearchError
-            except ImportError:
-                from search_api import PageApiSearchError
+        async def get_cookie():
+            cached = self.session.load_cached_cookie()
+            if cached:
+                return cached
+            if await self.browser.ensure_running():
+                full_cookie = await self.browser.get_full_cookie_string()
+                if full_cookie:
+                    self.session.save_cookie(full_cookie)
+                    return full_cookie
+            return None
 
-            fallback_reason = None
-            try:
-                runner = _build_page_api_runner(
-                    self.browser,
-                    params,
-                    self.settings.search.max_stale_pages,
-                )
-                outcome = await runner.search(params)
-                print(
-                    f"[Search] PageApi 结束 engine={outcome.engine_used} returned={outcome.returned_rows} stop_reason={outcome.stop_reason} stale_pages={outcome.stale_pages} pages_fetched={outcome.pages_fetched}",
-                    flush=True,
-                )
-                if outcome.returned_rows == 0:
-                    fallback_reason = "page_api_zero_items"
-                else:
-                    return outcome
-            except PageApiSearchError as exc:
-                fallback_reason = str(exc)
+        client = HttpApiSearchClient(get_cookie)
 
-            searcher = _BrowserSearchImpl(
-                self.browser,
+        try:
+            from .search_api import StableSearchRunner
+        except ImportError:
+            from search_api import StableSearchRunner
+
+        try:
+            runner = StableSearchRunner(
+                client=client,
                 max_stale_pages=self.settings.search.max_stale_pages,
             )
-            outcome = await searcher.search(params)
-            outcome.fallback_reason = fallback_reason
+            outcome = await runner.search(params)
+
             print(
-                f"[Search] Fallback 结束 engine={outcome.engine_used} returned={outcome.returned_rows} stop_reason={outcome.stop_reason} stale_pages={outcome.stale_pages} pages_fetched={outcome.pages_fetched} fallback_reason={outcome.fallback_reason!r}",
+                f"[Search] HTTP 搜索结束 engine={outcome.engine_used} "
+                f"returned={outcome.returned_rows} stop_reason={outcome.stop_reason} "
+                f"pages_fetched={outcome.pages_fetched}",
                 flush=True,
             )
+
             return outcome
+
+        finally:
+            await client.aclose()
 
     async def get_search_detail(self, item_ids: List[str]) -> Dict[str, Dict]:
         """
@@ -307,7 +315,9 @@ class XianyuApp:
         Returns:
             字典，key 为 item_id，value 为详细信息
         """
-        searcher = _BrowserSearchImpl(self.browser)
+        page = await self.browser.get_search_page()
+        self.browser.page = page
+        searcher = _BrowserSearchImpl(self.browser, page)
         return await searcher.get_item_details(item_ids)
 
     # ==================== 发布功能 ====================
@@ -323,15 +333,17 @@ class XianyuApp:
         Returns:
             发布结果字典
         """
-        copier = _ItemCopierImpl(self.browser)
-        return await copier.publish_from_item(
-            item_url,
-            new_title=options.get("new_title"),
-            new_description=options.get("new_description"),
-            new_price=options.get("new_price"),
-            original_price=options.get("original_price"),
-            condition=options.get("condition", "全新"),
-        )
+        async with self._publish_lock:
+            page = await self.browser.get_publish_page()
+            copier = _ItemCopierImpl(self.browser, page)
+            return await copier.publish_from_item(
+                item_url,
+                new_title=options.get("new_title"),
+                new_description=options.get("new_description"),
+                new_price=options.get("new_price"),
+                original_price=options.get("original_price"),
+                condition=options.get("condition", "全新"),
+            )
 
     async def get_detail(self, item_url: str) -> Optional[CopiedItem]:
         """
@@ -343,27 +355,31 @@ class XianyuApp:
         Returns:
             CopiedItem 对象，失败返回 None
         """
-        copier = _ItemCopierImpl(self.browser)
-        return await copier.capture_item_detail(item_url)
+        async with self._publish_lock:
+            page = await self.browser.get_publish_page()
+            copier = _ItemCopierImpl(self.browser, page)
+            return await copier.capture_item_detail(item_url)
 
 
 # ==================== 搜索实现（从 browser_search.py 迁移） ====================
 
 
 def _build_page_api_runner(
-    browser: AsyncChromeManager, params: SearchParams, max_stale_pages: int
+    browser: AsyncChromeManager,
+    page,
+    params: SearchParams,
+    max_stale_pages: int,
 ):
     try:
         from .search_api import PageApiSearchClient, StableSearchRunner
     except ImportError:
         from search_api import PageApiSearchClient, StableSearchRunner
-    page = browser.page
 
     async def ensure_page_ready():
         current_url = getattr(page, "url", "") or ""
         if "goofish.com" in current_url:
             return
-        await browser.navigate("https://www.goofish.com", wait_until="domcontentloaded")
+        await page.goto("https://www.goofish.com", wait_until="domcontentloaded")
 
     client = PageApiSearchClient(page, ensure_page_ready=ensure_page_ready)
     return StableSearchRunner(client=client, max_stale_pages=max_stale_pages)
@@ -372,10 +388,42 @@ def _build_page_api_runner(
 class _BrowserSearchImpl:
     """浏览器搜索管理器（内部实现）"""
 
-    def __init__(self, chrome_manager: AsyncChromeManager, max_stale_pages: int = 3):
+    def __init__(
+        self, chrome_manager: AsyncChromeManager, page, max_stale_pages: int = 3
+    ):
         self.chrome_manager = chrome_manager
+        self.page = page
         self.max_stale_pages = max_stale_pages
         self.search_results: List[Dict[str, Any]] = []
+        self._captured_responses: List[Dict[str, Any]] = []
+        self._current_response: Optional[Dict[str, Any]] = None
+        self._response_seq = 0
+        self._search_trigger_seq = 0
+
+    def _response_entry_seq(self, entry: Dict[str, Any], fallback_seq: int) -> int:
+        if isinstance(entry, dict) and "seq" in entry:
+            return entry["seq"]
+        return fallback_seq
+
+    def _response_entry_data(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        if isinstance(entry, dict) and "data" in entry and "seq" in entry:
+            return entry["data"]
+        return entry
+
+    def _latest_response_seq(self) -> int:
+        if not self._captured_responses:
+            return 0
+        return self._response_entry_seq(
+            self._captured_responses[-1], len(self._captured_responses)
+        )
+
+    def _select_latest_response_after(self, min_seq: int) -> Optional[Dict[str, Any]]:
+        total = len(self._captured_responses)
+        for index, entry in enumerate(reversed(self._captured_responses), start=1):
+            seq = self._response_entry_seq(entry, total - index + 1)
+            if seq > min_seq:
+                return entry
+        return None
 
     def _finalize_items(
         self, items: List[SearchItem], requested_rows: int
@@ -389,12 +437,13 @@ class _BrowserSearchImpl:
         all_items: List[SearchItem] = []
         seen_item_ids: set = set()  # 用于去重的 item_id 集合
         stale_pages = 0
+        page = 0
 
         if not await self.chrome_manager.ensure_running():
             raise RuntimeError("无法启动浏览器")
 
         try:
-            await self.chrome_manager.navigate("about:blank")
+            await self.page.goto("about:blank")
             await asyncio.sleep(0.5)
             await self._setup_response_listener()
             await self._navigate_to_search(params.keyword)
@@ -498,7 +547,7 @@ class _BrowserSearchImpl:
 
     async def _next_page(self, page: int):
         """翻页（优化速度）"""
-        page_obj = self.chrome_manager.page
+        page_obj = self.page
         if not page_obj:
             return
 
@@ -545,13 +594,11 @@ class _BrowserSearchImpl:
     async def _navigate_to_home(self):
         """导航到闲鱼首页"""
         print("[BrowserSearch] 导航到闲鱼首页...")
-        await self.chrome_manager.navigate(
-            "https://www.goofish.com", wait_until="domcontentloaded"
-        )
+        await self.page.goto("https://www.goofish.com", wait_until="domcontentloaded")
 
     async def _input_search_keyword(self, keyword: str):
         """输入搜索关键词"""
-        page = self.chrome_manager.page
+        page = self.page
         if not page:
             return
 
@@ -582,12 +629,15 @@ class _BrowserSearchImpl:
 
     async def _setup_response_listener(self):
         """设置响应监听器"""
-        page = self.chrome_manager.page
+        page = self.page
         if not page:
             return
 
         response_event = asyncio.Event()
         self._captured_responses = []
+        self._current_response = None
+        self._response_seq = 0
+        self._search_trigger_seq = 0
 
         def on_response(response):
             url = response.url
@@ -598,7 +648,10 @@ class _BrowserSearchImpl:
                     try:
                         data = await response.json()
                         if data and data.get("data"):
-                            self._captured_responses.append(data)
+                            self._response_seq += 1
+                            self._captured_responses.append(
+                                {"seq": self._response_seq, "data": data}
+                            )
                             response_event.set()
                             print(f"[BrowserSearch] 成功解析响应数据")
                     except Exception as e:
@@ -612,14 +665,12 @@ class _BrowserSearchImpl:
 
     async def _navigate_to_search(self, keyword: str):
         """通过首页搜索框导航到搜索页面"""
-        page = self.chrome_manager.page
+        page = self.page
         if not page:
             return
 
         print("[BrowserSearch] 导航到闲鱼首页...")
-        await self.chrome_manager.navigate(
-            "https://www.goofish.com", wait_until="domcontentloaded"
-        )
+        await page.goto("https://www.goofish.com", wait_until="domcontentloaded")
         await asyncio.sleep(2)
 
         try:
@@ -638,6 +689,7 @@ class _BrowserSearchImpl:
                 await asyncio.sleep(0.1)
                 await page.keyboard.type(keyword)
                 await asyncio.sleep(0.5)
+                self._search_trigger_seq = self._latest_response_seq()
                 await page.keyboard.press("Enter")
                 print("[BrowserSearch] 已按回车搜索")
                 await asyncio.sleep(3)
@@ -655,6 +707,7 @@ class _BrowserSearchImpl:
                 await asyncio.sleep(0.1)
                 await page.keyboard.type(keyword)
                 await asyncio.sleep(0.5)
+                self._search_trigger_seq = self._latest_response_seq()
                 await page.keyboard.press("Enter")
                 print("[BrowserSearch] 已按回车搜索")
                 await asyncio.sleep(3)
@@ -664,7 +717,7 @@ class _BrowserSearchImpl:
 
     async def _apply_filters(self, params: SearchParams):
         """应用筛选条件"""
-        page = self.chrome_manager.page
+        page = self.page
         if not page:
             return
 
@@ -740,14 +793,43 @@ class _BrowserSearchImpl:
         prev_count = 0
         if clear:
             self._captured_responses.clear()
+            self._current_response = None
+            self._response_seq = 0
+            self._search_trigger_seq = 0
         else:
             prev_count = len(self._captured_responses)
-            if prev_count > 0:
-                self.search_results = self._captured_responses
+            existing = self._select_latest_response_after(self._search_trigger_seq)
+            if existing is not None:
                 print(
-                    f"[BrowserSearch] 已有响应 count={prev_count}",
+                    f"[BrowserSearch] 已有搜索后响应 count={prev_count}，等待更新响应",
                     flush=True,
                 )
+                existing_seq = self._response_entry_seq(existing, prev_count)
+                settle_deadline = time.time() + min(timeout, 1)
+                while time.time() < settle_deadline:
+                    latest = self._select_latest_response_after(
+                        self._search_trigger_seq
+                    )
+                    if (
+                        latest is not None
+                        and self._response_entry_seq(
+                            latest, len(self._captured_responses)
+                        )
+                        > existing_seq
+                    ):
+                        print(
+                            f"[BrowserSearch] 捕获到更新响应 count={len(self._captured_responses)}",
+                            flush=True,
+                        )
+                        latest_data = self._response_entry_data(latest)
+                        self._current_response = latest_data
+                        self.search_results = [latest_data]
+                        return True
+                    await asyncio.sleep(0.1)
+
+                existing_data = self._response_entry_data(existing)
+                self._current_response = existing_data
+                self.search_results = [existing_data]
                 return True
 
         print(
@@ -756,12 +838,15 @@ class _BrowserSearchImpl:
         )
         start_time = time.time()
         while time.time() - start_time < timeout:
-            if len(self._captured_responses) > prev_count:
+            latest = self._select_latest_response_after(self._search_trigger_seq)
+            if latest is not None:
                 print(
                     f"[BrowserSearch] 捕获到 API 响应 count={len(self._captured_responses)}",
                     flush=True,
                 )
-                self.search_results = self._captured_responses
+                latest_data = self._response_entry_data(latest)
+                self._current_response = latest_data
+                self.search_results = [latest_data]
                 return True
             await asyncio.sleep(0.5)
 
@@ -777,18 +862,23 @@ class _BrowserSearchImpl:
             print("[BrowserSearch] 响应监听器未设置")
             return False
 
+        prev_seq = self._latest_response_seq()
+
         print(
             f"[BrowserSearch] 等待新页面的 API 响应... prev_count={prev_count}",
             flush=True,
         )
         start_time = time.time()
         while time.time() - start_time < timeout:
-            if len(self._captured_responses) > prev_count:
+            latest = self._select_latest_response_after(prev_seq)
+            if latest is not None:
                 print(
                     f"[BrowserSearch] 捕获到新页面响应 count={len(self._captured_responses)}",
                     flush=True,
                 )
-                self.search_results = self._captured_responses
+                latest_data = self._response_entry_data(latest)
+                self._current_response = latest_data
+                self.search_results = [latest_data]
                 return True
             await asyncio.sleep(0.5)
 
@@ -805,7 +895,7 @@ class _BrowserSearchImpl:
         if not self.search_results:
             return []
 
-        result = self.search_results[-1]
+        result = self._current_response or self.search_results[-1]
         data = result.get("data", {})
         result_list = data.get("resultList", [])
 
@@ -929,12 +1019,12 @@ class _BrowserSearchImpl:
         def on_response(response):
             asyncio.create_task(process_response(response))
 
-        self.chrome_manager.page.on("response", on_response)
+        self.page.on("response", on_response)
 
         for item_id in item_ids:
             try:
                 url = f"https://www.goofish.com/item?id={item_id}"
-                await self.chrome_manager.navigate(url, wait_until="domcontentloaded")
+                await self.page.goto(url, wait_until="domcontentloaded")
                 await asyncio.sleep(1.5)
             except Exception as e:
                 print(f"[BrowserSearch] 获取商品 {item_id} 详情失败：{e}")
@@ -948,8 +1038,9 @@ class _BrowserSearchImpl:
 class _ItemCopierImpl:
     """商品复制发布器（内部实现）"""
 
-    def __init__(self, chrome_manager: AsyncChromeManager):
+    def __init__(self, chrome_manager: AsyncChromeManager, publish_page):
         self.chrome_manager = chrome_manager
+        self.page = publish_page
         self.captured_data: Dict[str, Any] = {}
 
     async def capture_item_detail(
@@ -962,7 +1053,7 @@ class _ItemCopierImpl:
             print("[ItemCopier] 浏览器启动失败")
             return None
 
-        page = self.chrome_manager.page
+        page = self.page
         if not page:
             return None
 
@@ -985,7 +1076,7 @@ class _ItemCopierImpl:
         page.on("response", on_response)
 
         print(f"[ItemCopier] 打开商品链接：{item_url}")
-        await self.chrome_manager.navigate(item_url)
+        await self.chrome_manager.navigate(item_url, page=page)
 
         try:
             print(f"[ItemCopier] 等待 API 响应...")
@@ -1100,7 +1191,9 @@ class _ItemCopierImpl:
         print(f"[ItemCopier] 成功获取商品数据")
 
         print("[ItemCopier] 导航到发布页面...")
-        await self.chrome_manager.navigate("https://www.goofish.com/publish")
+        await self.chrome_manager.navigate(
+            "https://www.goofish.com/publish", page=self.page
+        )
         await asyncio.sleep(2)
 
         print("[ItemCopier] 步骤 2: 上传主图...")
@@ -1162,7 +1255,7 @@ class _ItemCopierImpl:
         await self._try_publish_or_save_draft()
         await asyncio.sleep(1)
 
-        page = self.chrome_manager.page
+        page = self.page
         if page:
             await page.screenshot(
                 path="/tmp/xianyu_publish_preview.png", full_page=True
@@ -1177,7 +1270,7 @@ class _ItemCopierImpl:
     async def _upload_image(self, image_url: str, is_main: bool = True) -> bool:
         """上传图片"""
         try:
-            page = self.chrome_manager.page
+            page = self.page
             if not page:
                 return False
 
@@ -1270,7 +1363,7 @@ class _ItemCopierImpl:
     async def _fill_description(self, description: str) -> bool:
         """填充描述"""
         try:
-            page = self.chrome_manager.page
+            page = self.page
             if not page:
                 return False
 
@@ -1289,7 +1382,7 @@ class _ItemCopierImpl:
     async def _fill_price(self, price: float, original_price: float) -> bool:
         """填充价格"""
         try:
-            page = self.chrome_manager.page
+            page = self.page
             if not page:
                 return False
 
@@ -1308,7 +1401,7 @@ class _ItemCopierImpl:
     async def _select_category(self, category: str) -> bool:
         """选择分类"""
         try:
-            page = self.chrome_manager.page
+            page = self.page
             if not page:
                 return False
 
@@ -1328,7 +1421,7 @@ class _ItemCopierImpl:
     async def _fill_brand(self, brand: str) -> bool:
         """填写品牌"""
         try:
-            page = self.chrome_manager.page
+            page = self.page
             if not page:
                 return False
 
@@ -1347,7 +1440,7 @@ class _ItemCopierImpl:
     async def _fill_model(self, model: str) -> bool:
         """填写型号"""
         try:
-            page = self.chrome_manager.page
+            page = self.page
             if not page:
                 return False
 
@@ -1364,7 +1457,7 @@ class _ItemCopierImpl:
     async def _select_condition(self, condition: str) -> bool:
         """选择成色"""
         try:
-            page = self.chrome_manager.page
+            page = self.page
             if not page:
                 return False
 
@@ -1380,7 +1473,7 @@ class _ItemCopierImpl:
     async def _set_free_ship(self) -> bool:
         """设置包邮"""
         try:
-            page = self.chrome_manager.page
+            page = self.page
             if not page:
                 return False
 
@@ -1395,7 +1488,7 @@ class _ItemCopierImpl:
     async def _try_publish_or_save_draft(self) -> bool:
         """尝试发布或保存草稿"""
         try:
-            page = self.chrome_manager.page
+            page = self.page
             if not page:
                 return False
 
