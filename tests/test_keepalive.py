@@ -262,18 +262,22 @@ async def test_app_start_background_tasks_idempotent_and_respects_settings(
             events.append("close")
 
     class FakeSession:
-        def __init__(self, chrome_manager, settings=None):
+        def __init__(self, chrome_manager, settings=None, page_coordinator=None):
             self.chrome_manager = chrome_manager
             self.settings = settings
+            self.page_coordinator = page_coordinator
 
         def save_cookie(self, full_cookie: str):
             return None
 
     class FakeKeepalive:
-        def __init__(self, browser, session, interval_minutes: int):
+        def __init__(
+            self, browser, session, interval_minutes: int, page_coordinator=None
+        ):
             self.browser = browser
             self.session = session
             self.interval_minutes = interval_minutes
+            self.page_coordinator = page_coordinator
             self.start_calls = 0
             self.stop_calls = 0
 
@@ -334,15 +338,22 @@ async def test_app_aexit_stops_background_tasks_before_closing_browser(
             events.append("close")
 
     class FakeSession:
-        def __init__(self, chrome_manager, settings=None):
+        def __init__(self, chrome_manager, settings=None, page_coordinator=None):
             self.chrome_manager = chrome_manager
             self.settings = settings
+            self.page_coordinator = page_coordinator
 
         def save_cookie(self, full_cookie: str):
             return None
 
     class FakeKeepalive:
-        def __init__(self, browser, session, interval_minutes: int):
+        def __init__(
+            self, browser, session, interval_minutes: int, page_coordinator=None
+        ):
+            self.browser = browser
+            self.session = session
+            self.interval_minutes = interval_minutes
+            self.page_coordinator = page_coordinator
             self.start_calls = 0
             self.stop_calls = 0
 
@@ -362,3 +373,75 @@ async def test_app_aexit_stops_background_tasks_before_closing_browser(
     await app.__aexit__(None, None, None)
 
     assert events == ["stop", "close"]
+
+
+class FakeCoordinator:
+    def __init__(self, page):
+        self.page = page
+        self.calls = 0
+
+    async def get_keepalive_page(self):
+        self.calls += 1
+        return self.page
+
+
+@pytest.mark.asyncio
+async def test_cookie_keepalive_uses_page_coordinator_when_present():
+    from src.keepalive import CookieKeepaliveService
+
+    browser = FakeKeepaliveBrowser(cookie_value="a=1; b=2")
+    session = FakeKeepaliveSession()
+    coordinator = FakeCoordinator(browser.keepalive_page)
+    service = CookieKeepaliveService(
+        browser=browser,
+        session=session,
+        interval_minutes=10,
+        page_coordinator=coordinator,
+    )
+
+    await service.run_once()
+
+    assert coordinator.calls == 1
+    assert browser.keepalive_page.goto_calls == ["https://www.goofish.com"]
+
+
+def test_app_builds_one_shared_page_coordinator(tmp_path):
+    import src.core as core_mod
+
+    settings = make_settings(tmp_path)
+
+    class FakeBrowser:
+        def __init__(self):
+            self.settings = settings
+
+    class FakeSession:
+        def __init__(self, chrome_manager, settings=None, page_coordinator=None):
+            self.chrome_manager = chrome_manager
+            self.settings = settings
+            self.page_coordinator = page_coordinator
+
+    class FakeKeepalive:
+        def __init__(self, browser, session, interval_minutes, page_coordinator=None):
+            self.browser = browser
+            self.session = session
+            self.interval_minutes = interval_minutes
+            self.page_coordinator = page_coordinator
+
+    class FakeCoordinator:
+        def __init__(self, browser):
+            self.browser = browser
+
+    browser = FakeBrowser()
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(core_mod, "SessionManager", FakeSession)
+    monkeypatch.setattr(core_mod, "CookieKeepaliveService", FakeKeepalive)
+    monkeypatch.setattr(core_mod, "PageCoordinator", FakeCoordinator)
+    try:
+        app = core_mod.XianyuApp(browser=browser, settings=settings)
+    finally:
+        monkeypatch.undo()
+
+    assert isinstance(app.page_coordinator, FakeCoordinator)
+    assert app.session.page_coordinator is app.page_coordinator
+    assert app.keepalive.page_coordinator is app.page_coordinator

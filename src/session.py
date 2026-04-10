@@ -168,6 +168,7 @@ class SessionManager:
         self,
         chrome_manager: Optional[AsyncChromeManager] = None,
         settings: Optional[AppSettings] = None,
+        page_coordinator: Any | None = None,
     ):
         """
         初始化会话管理器

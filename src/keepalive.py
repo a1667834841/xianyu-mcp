@@ -16,11 +16,17 @@ logger = logging.getLogger(__name__)
 
 
 class CookieKeepaliveService:
-    def __init__(self, browser: Any, session: Any, interval_minutes: int):
+    def __init__(
+        self,
+        browser: Any,
+        session: Any,
+        interval_minutes: int,
+        page_coordinator: Any | None = None,
+    ):
         self.browser = browser
         self.session = session
         self.interval_minutes = interval_minutes
-
+        self.page_coordinator = page_coordinator
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
         self._initialized = False
@@ -62,7 +68,10 @@ class CookieKeepaliveService:
             if not await self.browser.ensure_running():
                 return
 
-            page = await self.browser.get_keepalive_page()
+            if self.page_coordinator is not None:
+                page = await self.page_coordinator.get_keepalive_page()
+            else:
+                page = await self.browser.get_keepalive_page()
 
             if not self._initialized:
                 await page.goto("https://www.goofish.com")

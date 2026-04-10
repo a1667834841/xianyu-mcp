@@ -17,12 +17,14 @@ try:
     from .settings import AppSettings, load_settings
     from .keepalive import CookieKeepaliveService
     from .http_search import HttpApiSearchClient
+    from .page_coordinator import PageCoordinator
 except ImportError:
     from browser import AsyncChromeManager
     from session import SessionManager
     from settings import AppSettings, load_settings
     from keepalive import CookieKeepaliveService
     from http_search import HttpApiSearchClient
+    from page_coordinator import PageCoordinator
 
 
 logger = logging.getLogger(__name__)
@@ -122,7 +124,12 @@ class XianyuApp:
         except Exception:
             pass
 
-        self.session = SessionManager(self.browser, settings=resolved_settings)
+        self.page_coordinator = PageCoordinator(self.browser)
+        self.session = SessionManager(
+            self.browser,
+            settings=resolved_settings,
+            page_coordinator=self.page_coordinator,
+        )
         self._search_lock = asyncio.Lock()
         self._session_lock = asyncio.Lock()
         self._publish_lock = asyncio.Lock()
@@ -131,6 +138,7 @@ class XianyuApp:
             browser=self.browser,
             session=self.session,
             interval_minutes=resolved_settings.keepalive.interval_minutes,
+            page_coordinator=self.page_coordinator,
         )
         # Public name used by tests and other modules.
         self.keepalive = keepalive
@@ -344,6 +352,7 @@ class XianyuApp:
             page = await self.browser.get_publish_page()
             copier = _ItemCopierImpl(self.browser, page)
             return await copier.capture_item_detail(item_url)
+
 
 # ==================== 发布实现（从 item_copier.py 迁移） ====================
 
