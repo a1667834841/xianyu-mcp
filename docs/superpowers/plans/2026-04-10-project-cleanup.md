@@ -245,8 +245,7 @@ pytest tests/test_search_api.py tests/test_search_pagination.py -v
 - [ ] **Step 8: 提交**
 
 ```bash
-git add src/search_api.py tests/test_search_api.py tests/test_search_pagination.py
-git add tests/test_page_isolation.py  # 删除的文件
+git add src/search_api.py tests/test_search_api.py tests/test_search_pagination.py tests/test_page_isolation.py
 git commit -m "refactor(search_api): 删除废弃的 PageApiSearchClient 及相关测试"
 ```
 
