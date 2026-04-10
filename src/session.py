@@ -979,18 +979,6 @@ class SessionManager:
             print(f"[QR] 获取二维码失败：{e}")
             print("[QR] 请在浏览器窗口扫码登录")
 
-    async def get_token(self) -> Optional[str]:
-        """获取 Token (优先从缓存，过期则扫码)"""
-        token = self.load_cached_token()
-        if token:
-            if await self.chrome_manager.ensure_running():
-                if await self.check_login_status():
-                    return token
-                print("[Session] 缓存 Token 无效，需要重新登录")
-
-        print("[Session] 需要扫码登录")
-        return await self.login()
-
     # ==================== 签名方法 ====================
 
     def _md5(self, text: str) -> str:
