@@ -86,9 +86,21 @@
 
 **注意**: `StableSearchRunner` 相关测试（第94-153行）应保留。
 
-#### 2.4.4 tests/test_page_isolation.py - 删除整个文件
+#### 2.4.4 tests/test_page_isolation.py - 更新测试
 
-该测试文件依赖废弃的 `_BrowserSearchImpl` 和 `_build_page_api_runner`，测试旧的浏览器搜索架构，需要删除整个文件。
+该测试文件包含两类测试：
+
+**需要删除的测试**（依赖 `_BrowserSearchImpl` 和 `_build_page_api_runner`）：
+- 第372-440行区域的测试
+- 第480-574行区域的测试
+- 第581-703行区域的测试
+- 第706-776行区域的测试
+
+**应保留的测试**（测试锁机制和页面隔离，不依赖废弃代码）：
+- `test_xianyu_app_uses_distinct_role_locks`
+- `test_publish_entries_use_publish_page_and_publish_lock`
+- `test_check_cookie_valid_uses_session_page`
+- 其他不依赖 `_BrowserSearchImpl` 的测试
 
 #### 2.4.5 tests/test_search_pagination.py - 更新测试
 
@@ -96,11 +108,14 @@
 - 删除 `from src.search_api import PageApiSearchError` 导入
 - 删除或更新使用 `PageApiSearchError` 和 `_build_page_api_runner` 的测试用例
 
-#### 2.4.6 src/core.py - _build_page_api_runner() 函数
+#### 2.4.6 src/core.py - _build_page_api_runner() 和 _BrowserSearchImpl
 
-删除 `_build_page_api_runner()` 函数（约第367行）。
+删除以下内容：
+- `_build_page_api_runner()` 函数（约第367行）
+- `get_search_detail()` 方法（约第308行）- 未被外部调用
+- `_BrowserSearchImpl` 类（约第388行）- 仅被 `get_search_detail()` 使用
 
-**原因**: 仅用于构建 `PageApiSearchClient` runner，该类已废弃。
+**原因**: 这些代码相互依赖形成死代码链：`_build_page_api_runner` 构建 `PageApiSearchClient` runner（已废弃），`get_search_detail()` 使用 `_BrowserSearchImpl`，而 `_BrowserSearchImpl` 又依赖已删除的代码。
 
 #### 2.4.7 src/session.py - 重复的 get_token() 方法
 
