@@ -5,6 +5,7 @@
 from .browser import AsyncChromeManager, ChromeManager
 from .session import SessionManager, login, refresh_token, check_cookie_valid
 from .keepalive import CookieKeepaliveService
+from .page_coordinator import PageCoordinator, PageLease
 from .core import (
     XianyuApp,
     SearchItem,
@@ -24,6 +25,8 @@ __all__ = [
     "ChromeManager",  # 向后兼容
     "SessionManager",
     "CookieKeepaliveService",
+    "PageCoordinator",
+    "PageLease",
     "XianyuApp",
     # 数据类
     "SearchItem",
