@@ -79,18 +79,18 @@
 
 需要更新测试文件：
 - 第4行：修改 import 语句，删除 `PageApiSearchClient, PageApiSearchError`，保留 `StableSearchRunner`
-- 第40-81行：删除 `test_page_api_client_init` 和 `test_fetch_page_success` 测试
-- 第156-227行：删除 `test_fetch_page_keyword_mismatch` 和 `test_ensure_page_ready` 测试
+- 第40-81行：删除 `test_page_api_client_returns_structured_page` 和 `test_page_api_client_rejects_keyword_mismatch` 测试
+- 第156-227行：删除 `test_page_api_client_installs_bridge_once`、`test_page_api_client_runs_ready_hook_before_bridge`、`test_page_api_client_wraps_page_errors_as_search_errors` 测试
 
 **注意**: `StableSearchRunner` 相关测试（第94-153行）应保留。
 
-#### 2.4.3 src/core.py - _build_page_api_runner() 函数
+#### 2.4.4 src/core.py - _build_page_api_runner() 函数
 
 删除 `_build_page_api_runner()` 函数（约第367行）。
 
 **原因**: 仅用于构建 `PageApiSearchClient` runner，该类已废弃。
 
-#### 2.4.4 src/session.py - 重复的 get_token() 方法
+#### 2.4.5 src/session.py - 重复的 get_token() 方法
 
 删除以下内容：
 - 第982-992行的 `get_token()` 方法（重复定义，调用了不存在的方法 `load_cached_token()`，是死代码）
