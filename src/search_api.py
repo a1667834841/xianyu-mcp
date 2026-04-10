@@ -1,9 +1,40 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Awaitable, Callable, List, Optional
 
 from .core import SearchItem, SearchOutcome, SearchParams
+
+
+def calculate_exposure_score(want_cnt: int, publish_time_str: Optional[str]) -> float:
+    """
+    计算曝光度分数
+
+    公式: 曝光度 = (想要人数 × 100) / (天数差 + 1)
+    天数差 = (当前时间 - 发布时间) / 24小时
+
+    Args:
+        want_cnt: 想要人数
+        publish_time_str: 发布时间字符串（格式：%Y-%m-%d %H:%M:%S）
+
+    Returns:
+        曝光度分数，保留两位小数
+    """
+    if want_cnt <= 0 or not publish_time_str:
+        return 0.0
+
+    try:
+        publish_dt = datetime.strptime(publish_time_str, "%Y-%m-%d %H:%M:%S")
+        now = datetime.now()
+        if publish_dt > now:
+            return 0.0
+        hours_diff = (now - publish_dt).total_seconds() / 3600
+        days_diff = max(0, hours_diff / 24)
+        exposure_score = (want_cnt * 100) / (days_diff + 1)
+        return round(exposure_score, 2)
+    except (ValueError, TypeError):
+        return 0.0
 
 
 class StableSearchRunner:
@@ -35,6 +66,8 @@ class StableSearchRunner:
             for item in items:
                 if item.item_id not in seen_item_ids:
                     seen_item_ids.add(item.item_id)
+                    # 计算曝光度
+                    item.exposure_score = calculate_exposure_score(item.want_cnt, item.publish_time)
                     all_items.append(item)
                     new_count += 1
 

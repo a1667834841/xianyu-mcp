@@ -167,16 +167,6 @@ class HttpApiSearchClient:
                 if not item_id:
                     continue
 
-                def extract_text(val: Any) -> str:
-                    if isinstance(val, str):
-                        return val
-                    if isinstance(val, list):
-                        return "".join(
-                            v.get("text", "") if isinstance(v, dict) else str(v)
-                            for v in val
-                        )
-                    return str(val or "")
-
                 # price: 优先从 clickParam 获取，否则从 price 数组解析
                 price_str = click_args.get("price") or click_args.get("displayPrice", "")
                 if not price_str:
@@ -372,7 +362,7 @@ def _extract_want_cnt(ex_content: Dict[str, Any]) -> int:
                 match = re.search(r"(\d+)人想要", content)
                 if match:
                     return int(match.group(1))
-    except (KeyError, TypeError):
+    except (AttributeError, TypeError):
         pass
     return 0
 

@@ -1,7 +1,10 @@
+from datetime import datetime
+from unittest.mock import patch
+
 import pytest
 
 from src.core import SearchItem, SearchParams
-from src.search_api import StableSearchRunner
+from src.search_api import StableSearchRunner, calculate_exposure_score
 
 
 def make_item(item_id: str) -> dict:
@@ -91,3 +94,52 @@ async def test_stable_runner_stops_after_stale_pages():
     assert len(outcome.items) == 2
     assert outcome.stop_reason == "stale_limit"
     assert outcome.stale_pages == 2
+
+
+# ==================== 曝光度计算测试 ====================
+
+
+def test_calculate_exposure_score_normal():
+    """正常计算曝光度"""
+    # 使用固定时间避免时间差问题
+    with patch("src.search_api.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 4, 10, 12, 0, 0)
+        mock_dt.strptime = datetime.strptime
+
+        # 1天前发布，100人想要
+        result = calculate_exposure_score(100, "2026-04-09 12:00:00")
+        # 曝光度 = (100 * 100) / (1 + 1) = 5000
+        assert result == 5000.0
+
+
+def test_calculate_exposure_score_zero_want():
+    """想要人数为 0"""
+    result = calculate_exposure_score(0, "2026-04-09 00:00:00")
+    assert result == 0.0
+
+
+def test_calculate_exposure_score_no_publish_time():
+    """无发布时间"""
+    result = calculate_exposure_score(100, None)
+    assert result == 0.0
+
+
+def test_calculate_exposure_score_future_time():
+    """发布时间在未来"""
+    with patch("src.search_api.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 4, 10, 12, 0, 0)
+        mock_dt.strptime = datetime.strptime
+
+        result = calculate_exposure_score(100, "2026-04-11 12:00:00")
+        assert result == 0.0
+
+
+def test_calculate_exposure_score_just_published():
+    """刚发布（0天）"""
+    with patch("src.search_api.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 4, 10, 12, 0, 0)
+        mock_dt.strptime = datetime.strptime
+
+        result = calculate_exposure_score(100, "2026-04-10 12:00:00")
+        # 曝光度 = (100 * 100) / (0 + 1) = 10000
+        assert result == 10000.0

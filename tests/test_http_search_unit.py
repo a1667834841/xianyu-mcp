@@ -12,6 +12,7 @@ from src.http_search import (
     HttpApiSearchClient,
     HttpApiSearchError,
     HttpApiResult,
+    _extract_want_cnt,
 )
 from src.core import SearchParams, SearchItem
 
@@ -401,6 +402,206 @@ class TestHttpApiSearchClientFetchPage:
 
         assert result.error == "NETWORK_ERROR"
         assert "Network error" in result.message
+
+
+class TestExtractWantCnt:
+    """测试 _extract_want_cnt 函数"""
+
+    def test_extract_want_cnt_from_fish_tags(self):
+        """测试从 fishTags.r3 提取想要人数"""
+        ex_content = {
+            "fishTags": {
+                "r3": {
+                    "tagList": [
+                        {"data": {"content": "10人想要"}},
+                        {"data": {"content": "其他信息"}},
+                    ]
+                }
+            }
+        }
+        result = _extract_want_cnt(ex_content)
+        assert result == 10
+
+    def test_extract_want_cnt_no_fish_tags(self):
+        """测试无 fishTags 时返回 0"""
+        ex_content = {}
+        result = _extract_want_cnt(ex_content)
+        assert result == 0
+
+    def test_extract_want_cnt_no_r3_tags(self):
+        """测试无 r3 标签时返回 0"""
+        ex_content = {"fishTags": {"r1": {"tagList": []}}}
+        result = _extract_want_cnt(ex_content)
+        assert result == 0
+
+    def test_extract_want_cnt_empty_tag_list(self):
+        """测试空标签列表返回 0"""
+        ex_content = {"fishTags": {"r3": {"tagList": []}}}
+        result = _extract_want_cnt(ex_content)
+        assert result == 0
+
+    def test_extract_want_cnt_no_want_text(self):
+        """测试无想要人数文本返回 0"""
+        ex_content = {
+            "fishTags": {
+                "r3": {"tagList": [{"data": {"content": "其他信息"}}]}
+            }
+        }
+        result = _extract_want_cnt(ex_content)
+        assert result == 0
+
+    def test_extract_want_cnt_invalid_tag_type(self):
+        """测试无效的 tag 类型处理"""
+        ex_content = {
+            "fishTags": {
+                "r3": {"tagList": ["invalid_tag", {"data": {"content": "5人想要"}}]}
+            }
+        }
+        result = _extract_want_cnt(ex_content)
+        assert result == 5
+
+    def test_extract_want_cnt_large_number(self):
+        """测试大数字想要人数"""
+        ex_content = {
+            "fishTags": {
+                "r3": {"tagList": [{"data": {"content": "9999人想要"}}]}
+            }
+        }
+        result = _extract_want_cnt(ex_content)
+        assert result == 9999
+
+
+class TestPriceExtraction:
+    """测试价格提取逻辑"""
+
+    def test_price_from_click_param_args(self):
+        """测试 price 优先从 clickParam.args 获取"""
+        client = HttpApiSearchClient()
+        response = {
+            "ret": ["SUCCESS::调用成功"],
+            "data": {
+                "resultList": [
+                    {
+                        "data": {
+                            "item": {
+                                "main": {
+                                    "exContent": {
+                                        "itemId": "123",
+                                        "title": "测试商品",
+                                        "price": [{"text": "¥200"}],  # 应该被忽略
+                                    },
+                                    "clickParam": {
+                                        "args": {
+                                            "item_id": "123",
+                                            "price": "¥150",  # 优先使用这个
+                                        }
+                                    },
+                                }
+                            }
+                        }
+                    }
+                ]
+            },
+        }
+
+        items = client._parse_response(response, "test", 1)
+
+        assert len(items) == 1
+        assert items[0].price == "¥150"
+
+    def test_price_from_click_param_display_price(self):
+        """测试 price 从 clickParam.args.displayPrice 获取"""
+        client = HttpApiSearchClient()
+        response = {
+            "ret": ["SUCCESS::调用成功"],
+            "data": {
+                "resultList": [
+                    {
+                        "data": {
+                            "item": {
+                                "main": {
+                                    "exContent": {
+                                        "itemId": "456",
+                                        "title": "测试商品2",
+                                        "price": [{"text": "¥300"}],
+                                    },
+                                    "clickParam": {
+                                        "args": {
+                                            "item_id": "456",
+                                            "displayPrice": "¥250",
+                                        }
+                                    },
+                                }
+                            }
+                        }
+                    }
+                ]
+            },
+        }
+
+        items = client._parse_response(response, "test", 1)
+
+        assert len(items) == 1
+        assert items[0].price == "¥250"
+
+    def test_price_fallback_to_ex_content(self):
+        """测试当 clickParam 无 price 时回退到 exContent.price"""
+        client = HttpApiSearchClient()
+        response = {
+            "ret": ["SUCCESS::调用成功"],
+            "data": {
+                "resultList": [
+                    {
+                        "data": {
+                            "item": {
+                                "main": {
+                                    "exContent": {
+                                        "itemId": "789",
+                                        "title": "测试商品3",
+                                        "price": [{"text": "¥500"}, {"text": ".00"}],
+                                    },
+                                    "clickParam": {"args": {"item_id": "789"}},
+                                }
+                            }
+                        }
+                    }
+                ]
+            },
+        }
+
+        items = client._parse_response(response, "test", 1)
+
+        assert len(items) == 1
+        assert items[0].price == "¥500.00"
+
+    def test_price_empty_when_no_source(self):
+        """测试无价格来源时 price 为空"""
+        client = HttpApiSearchClient()
+        response = {
+            "ret": ["SUCCESS::调用成功"],
+            "data": {
+                "resultList": [
+                    {
+                        "data": {
+                            "item": {
+                                "main": {
+                                    "exContent": {
+                                        "itemId": "999",
+                                        "title": "测试商品4",
+                                    },
+                                    "clickParam": {"args": {"item_id": "999"}},
+                                }
+                            }
+                        }
+                    }
+                ]
+            },
+        }
+
+        items = client._parse_response(response, "test", 1)
+
+        assert len(items) == 1
+        assert items[0].price == ""
 
 
 class TestHttpApiResult:
