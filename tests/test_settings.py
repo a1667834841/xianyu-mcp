@@ -1,9 +1,9 @@
 import json
 from pathlib import Path
 
-import settings as settings_module
+import src.settings as settings_module
 
-from settings import (
+from src.settings import (
     DEFAULT_DATA_ROOT,
     DEFAULT_KEEPALIVE_INTERVAL_MINUTES,
     DEFAULT_SEARCH_MAX_STALE_PAGES,
