@@ -79,11 +79,11 @@
 #### 2.4.4 src/session.py - 重复的 get_token() 方法
 
 删除以下内容：
-- 第415行的 `get_token()` 方法（第一个定义）
-- `load_cached_token()` 方法（约第455行）
-- 第982行的 `get_token()` 方法（第二个定义，调用 load_cached_token）
+- 第982-992行的 `get_token()` 方法（重复定义，调用了不存在的方法 `load_cached_token()`，是死代码）
 
-**原因**: `get_token()` 有两个重复定义，代码逻辑混乱。当前使用的是其他方式获取 token。
+**注意**: 第415行的 `get_token()` 方法是正常工作的版本，不应删除。
+
+**原因**: 第982行的 `get_token()` 调用了不存在的 `load_cached_token()` 方法，这是一个 bug，整个方法是死代码无法正常执行。
 
 ## 三、执行计划
 
