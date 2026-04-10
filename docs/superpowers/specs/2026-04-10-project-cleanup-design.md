@@ -64,11 +64,25 @@
 
 **原因**: 项目已全面转向异步模式，无调用者使用同步 API。
 
-#### 2.4.2 src/search_api.py - PageApiSearchClient 类
+#### 2.4.2 src/search_api.py - PageApiSearchClient 相关代码
 
-删除 `PageApiSearchClient` 类（约第20-166行）。
+删除以下内容（第9-325行）：
+- `PageApiSearchError` 类（第9-10行）
+- `PageApiResult` 数据类（第13-18行）
+- `PageApiSearchClient` 类（第20-325行）
 
-**原因**: 搜索架构已切换为 HTTP API 方式，`HttpApiSearchClient` 已替代基于浏览器页面执行 JavaScript 的 `PageApiSearchClient`。
+**注意**: `StableSearchRunner` 类（第328-402行）应**保留**，它仍被 `HttpApiSearchClient` 使用。
+
+**原因**: 搜索架构已切换为 HTTP API 方式，`HttpApiSearchClient` 已替代基于浏览器页面执行 JavaScript 的 `PageApiSearchClient`。`PageApiSearchError` 和 `PageApiResult` 仅被 `PageApiSearchClient` 使用，删除后成为死代码。
+
+#### 2.4.3 tests/test_search_api.py - 测试文件更新
+
+需要更新测试文件：
+- 第4行：修改 import 语句，删除 `PageApiSearchClient, PageApiSearchError`，保留 `StableSearchRunner`
+- 第40-81行：删除 `test_page_api_client_init` 和 `test_fetch_page_success` 测试
+- 第156-227行：删除 `test_fetch_page_keyword_mismatch` 和 `test_ensure_page_ready` 测试
+
+**注意**: `StableSearchRunner` 相关测试（第94-153行）应保留。
 
 #### 2.4.3 src/core.py - _build_page_api_runner() 函数
 
