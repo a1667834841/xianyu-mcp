@@ -662,19 +662,6 @@ class AsyncChromeManager:
         """异步上下文管理器出口"""
         await self.close()
 
-    # 同步方法 (向后兼容)
-    def connect_sync(self) -> bool:
-        return asyncio.run(self.connect())
-
-    def navigate_sync(self, url: str) -> bool:
-        return asyncio.run(self.navigate(url))
-
-    def get_cookie_sync(self, name: str) -> Optional[str]:
-        return asyncio.run(self.get_cookie(name))
-
-    def get_xianyu_token_sync(self) -> Optional[str]:
-        return asyncio.run(self.get_xianyu_token())
-
     def close_sync(self):
         """同步关闭浏览器"""
         if self.browser:
@@ -703,12 +690,6 @@ class AsyncChromeManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """同步上下文管理器出口"""
         self.close_sync()
-
-
-# 便捷函数
-def get_browser() -> AsyncChromeManager:
-    """获取浏览器实例"""
-    return AsyncChromeManager()
 
 
 # 向后兼容：ChromeManager 是 AsyncChromeManager 的别名
