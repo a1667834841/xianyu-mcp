@@ -62,6 +62,8 @@
 | `get_xianyu_token_sync()` | 约675 | 同步版本的 get_xianyu_token |
 | `get_browser()` | 约709 | 便捷函数 |
 
+**注意**: 保留 `close_sync()` 方法，因为它被 `__exit__` 方法使用。
+
 **原因**: 项目已全面转向异步模式，无调用者使用同步 API。
 
 #### 2.4.2 src/search_api.py - PageApiSearchClient 相关代码
@@ -84,13 +86,23 @@
 
 **注意**: `StableSearchRunner` 相关测试（第94-153行）应保留。
 
-#### 2.4.4 src/core.py - _build_page_api_runner() 函数
+#### 2.4.4 tests/test_page_isolation.py - 删除整个文件
+
+该测试文件依赖废弃的 `_BrowserSearchImpl` 和 `_build_page_api_runner`，测试旧的浏览器搜索架构，需要删除整个文件。
+
+#### 2.4.5 tests/test_search_pagination.py - 更新测试
+
+需要更新测试文件：
+- 删除 `from src.search_api import PageApiSearchError` 导入
+- 删除或更新使用 `PageApiSearchError` 和 `_build_page_api_runner` 的测试用例
+
+#### 2.4.6 src/core.py - _build_page_api_runner() 函数
 
 删除 `_build_page_api_runner()` 函数（约第367行）。
 
 **原因**: 仅用于构建 `PageApiSearchClient` runner，该类已废弃。
 
-#### 2.4.5 src/session.py - 重复的 get_token() 方法
+#### 2.4.7 src/session.py - 重复的 get_token() 方法
 
 删除以下内容：
 - 第982-992行的 `get_token()` 方法（重复定义，调用了不存在的方法 `load_cached_token()`，是死代码）

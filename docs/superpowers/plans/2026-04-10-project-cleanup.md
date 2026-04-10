@@ -153,7 +153,7 @@ grep -n "def connect_sync\|def navigate_sync\|def get_cookie_sync\|def get_xiany
 - `get_xianyu_token_sync()` - 同步版本的 get_xianyu_token
 - `get_browser()` - 便捷函数
 
-同时删除 `close_sync()` 方法（如果仅在 `__exit__` 中使用，检查是否可删除）
+**注意**: 保留 `close_sync()` 方法，因为它被 `__exit__` 方法使用。
 
 - [ ] **Step 3: 验证单元测试**
 
@@ -176,6 +176,8 @@ git commit -m "refactor(browser): 删除未使用的同步方法"
 **Files:**
 - 修改: `src/search_api.py` (删除第9-325行)
 - 修改: `tests/test_search_api.py` (删除相关测试)
+- 删除: `tests/test_page_isolation.py` (依赖废弃架构的测试)
+- 修改: `tests/test_search_pagination.py` (删除 PageApiSearchError 相关测试)
 
 - [ ] **Step 1: 删除 PageApiSearchError 和 PageApiResult**
 
@@ -212,17 +214,37 @@ from src.search_api import StableSearchRunner
 
 **保留**: `StableSearchRunner` 相关测试（第94-153行区域）
 
-- [ ] **Step 5: 验证单元测试**
+- [ ] **Step 5: 删除 test_page_isolation.py**
+
+该测试文件依赖废弃的 `_BrowserSearchImpl` 和 `_build_page_api_runner`，测试旧的浏览器搜索架构：
 
 ```bash
-pytest tests/test_search_api.py -v
+rm tests/test_page_isolation.py
+```
+
+- [ ] **Step 6: 更新 test_search_pagination.py**
+
+该文件导入了 `PageApiSearchError` 并使用 `_build_page_api_runner`：
+
+编辑 `tests/test_search_pagination.py`：
+- 删除第165行的 `from src.search_api import PageApiSearchError` 导入
+- 删除或更新使用 `PageApiSearchError` 的测试用例（第299行附近）
+- 删除或更新 monkeypatch `_build_page_api_runner` 的测试用例（第275, 297, 329, 384, 416行）
+
+**注意**: 保留不依赖废弃代码的测试用例。
+
+- [ ] **Step 7: 验证单元测试**
+
+```bash
+pytest tests/test_search_api.py tests/test_search_pagination.py -v
 # Expected: 所有保留的测试通过
 ```
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 8: 提交**
 
 ```bash
-git add src/search_api.py tests/test_search_api.py
+git add src/search_api.py tests/test_search_api.py tests/test_search_pagination.py
+git add tests/test_page_isolation.py  # 删除的文件
 git commit -m "refactor(search_api): 删除废弃的 PageApiSearchClient 及相关测试"
 ```
 
@@ -246,7 +268,7 @@ grep -n "_build_page_api_runner" src/core.py
 - [ ] **Step 3: 验证单元测试**
 
 ```bash
-pytest tests/test_core.py -v
+pytest tests/ -v --ignore=tests/test_page_isolation.py
 # Expected: 所有测试通过
 ```
 
