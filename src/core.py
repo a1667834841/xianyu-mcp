@@ -271,47 +271,52 @@ class XianyuApp:
             sort_order=options.get("sort_order", ""),
         )
 
-        print(
-            f"[Search] 开始 HTTP 搜索 keyword={params.keyword!r} rows={params.rows}",
-            flush=True,
-        )
-
-        async def get_cookie():
-            cached = self.session.load_cached_cookie()
-            if cached:
-                return cached
-            if await self.browser.ensure_running():
-                full_cookie = await self.browser.get_full_cookie_string()
-                if full_cookie:
-                    self.session.save_cookie(full_cookie)
-                    return full_cookie
-            return None
-
-        client = HttpApiSearchClient(get_cookie)
-
-        try:
-            from .search_api import StableSearchRunner
-        except ImportError:
-            from search_api import StableSearchRunner
-
-        try:
-            runner = StableSearchRunner(
-                client=client,
-                max_stale_pages=self.settings.search.max_stale_pages,
-            )
-            outcome = await runner.search(params)
+        lease = await self.page_coordinator.lease_task_page()
+        async with lease:
+            page = lease.page
 
             print(
-                f"[Search] HTTP 搜索结束 engine={outcome.engine_used} "
-                f"returned={outcome.returned_rows} stop_reason={outcome.stop_reason} "
-                f"pages_fetched={outcome.pages_fetched}",
+                f"[Search] 开始 HTTP 搜索 keyword={params.keyword!r} rows={params.rows}",
                 flush=True,
             )
 
-            return outcome
+            async def get_cookie():
+                cached = self.session.load_cached_cookie()
+                if cached:
+                    return cached
+                if await self.browser.ensure_running():
+                    await self.browser.navigate("https://www.goofish.com", page=page)
+                    full_cookie = await self.browser.get_full_cookie_string()
+                    if full_cookie:
+                        self.session.save_cookie(full_cookie)
+                        return full_cookie
+                return None
 
-        finally:
-            await client.aclose()
+            client = HttpApiSearchClient(get_cookie)
+
+            try:
+                from .search_api import StableSearchRunner
+            except ImportError:
+                from search_api import StableSearchRunner
+
+            try:
+                runner = StableSearchRunner(
+                    client=client,
+                    max_stale_pages=self.settings.search.max_stale_pages,
+                )
+                outcome = await runner.search(params)
+
+                print(
+                    f"[Search] HTTP 搜索结束 engine={outcome.engine_used} "
+                    f"returned={outcome.returned_rows} stop_reason={outcome.stop_reason} "
+                    f"pages_fetched={outcome.pages_fetched}",
+                    flush=True,
+                )
+
+                return outcome
+
+            finally:
+                await client.aclose()
 
     # ==================== 发布功能 ====================
 
@@ -327,16 +332,17 @@ class XianyuApp:
             发布结果字典
         """
         async with self._publish_lock:
-            page = await self.browser.get_publish_page()
-            copier = _ItemCopierImpl(self.browser, page)
-            return await copier.publish_from_item(
-                item_url,
-                new_title=options.get("new_title"),
-                new_description=options.get("new_description"),
-                new_price=options.get("new_price"),
-                original_price=options.get("original_price"),
-                condition=options.get("condition", "全新"),
-            )
+            lease = await self.page_coordinator.lease_task_page()
+            async with lease:
+                copier = _ItemCopierImpl(self.browser, lease.page)
+                return await copier.publish_from_item(
+                    item_url,
+                    new_title=options.get("new_title"),
+                    new_description=options.get("new_description"),
+                    new_price=options.get("new_price"),
+                    original_price=options.get("original_price"),
+                    condition=options.get("condition", "全新"),
+                )
 
     async def get_detail(self, item_url: str) -> Optional[CopiedItem]:
         """
@@ -349,9 +355,10 @@ class XianyuApp:
             CopiedItem 对象，失败返回 None
         """
         async with self._publish_lock:
-            page = await self.browser.get_publish_page()
-            copier = _ItemCopierImpl(self.browser, page)
-            return await copier.capture_item_detail(item_url)
+            lease = await self.page_coordinator.lease_task_page()
+            async with lease:
+                copier = _ItemCopierImpl(self.browser, lease.page)
+                return await copier.capture_item_detail(item_url)
 
 
 # ==================== 发布实现（从 item_copier.py 迁移） ====================
