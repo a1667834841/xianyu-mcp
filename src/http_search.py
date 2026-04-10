@@ -177,28 +177,24 @@ class HttpApiSearchClient:
                         )
                     return str(val or "")
 
-                price_str = extract_text(ex_content.get("price", []))
-                original_price_str = extract_text(ex_content.get("originalPrice", []))
+                # price: 优先从 clickParam 获取，否则从 price 数组解析
+                price_str = click_args.get("price") or click_args.get("displayPrice", "")
+                if not price_str:
+                    price_parts = ex_content.get("price", [])
+                    if isinstance(price_parts, list):
+                        price_str = "".join(
+                            p.get("text", "") for p in price_parts
+                            if isinstance(p, dict)
+                        )
+                # original_price: API 无可靠来源，保持空
+                original_price_str = ""
 
-                publish_time_str = None
-                publish_time_ms = click_args.get("publishTime")
-                if publish_time_ms:
-                    try:
-                        from datetime import datetime
-
-                        publish_dt = datetime.fromtimestamp(int(publish_time_ms) / 1000)
-                        publish_time_str = publish_dt.strftime("%Y-%m-%d %H:%M:%S")
-                    except Exception:
-                        pass
+                publish_time_str = _format_publish_time(click_args.get("publishTime"))
 
                 pic_url = ex_content.get("picUrl", "")
                 image_urls = [pic_url] if pic_url else []
 
-                want_cnt = 0
-                try:
-                    want_cnt = int(ex_content.get("wantNum", 0))
-                except Exception:
-                    pass
+                want_cnt = _extract_want_cnt(ex_content)
 
                 item = SearchItem(
                     item_id=str(item_id),
@@ -206,11 +202,11 @@ class HttpApiSearchClient:
                     price=price_str,
                     original_price=original_price_str,
                     want_cnt=want_cnt,
-                    seller_nick=ex_content.get("userNick", ""),
-                    seller_city=ex_content.get("city", ""),
+                    seller_nick=ex_content.get("userNickName", ""),
+                    seller_city=ex_content.get("area", ""),
                     image_urls=image_urls,
                     detail_url=f"https://www.goofish.com/item?id={item_id}",
-                    is_free_ship=bool(ex_content.get("freeDelivery")),
+                    is_free_ship=False,  # API 无此字段
                     publish_time=publish_time_str,
                     exposure_score=0.0,
                 )
@@ -220,6 +216,7 @@ class HttpApiSearchClient:
                 continue
 
         return items
+
 
     async def _send_request(
         self,
@@ -358,3 +355,33 @@ class HttpApiSearchClient:
                 message=str(e),
                 raw_response=None,
             )
+
+
+def _extract_want_cnt(ex_content: Dict[str, Any]) -> int:
+    """从 fishTags.r3 提取想要人数"""
+    try:
+        fish_tags = ex_content.get("fishTags", {})
+        r3_tags = fish_tags.get("r3", {}).get("tagList", [])
+        if not isinstance(r3_tags, list):
+            return 0
+        for tag in r3_tags:
+            if not isinstance(tag, dict):
+                continue
+            content = tag.get("data", {}).get("content", "")
+            if "人想要" in content:
+                match = re.search(r"(\d+)人想要", content)
+                if match:
+                    return int(match.group(1))
+    except (KeyError, TypeError):
+        pass
+    return 0
+
+
+def _format_publish_time(publish_time_ms: Any) -> Optional[str]:
+    """格式化发布时间（毫秒转字符串）"""
+    try:
+        from datetime import datetime
+        publish_dt = datetime.fromtimestamp(int(publish_time_ms) / 1000)
+        return publish_dt.strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None

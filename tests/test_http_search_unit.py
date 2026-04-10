@@ -167,10 +167,10 @@ class TestHttpApiSearchClientResponse:
                                         "price": [{"text": "¥100"}],
                                         "originalPrice": [{"text": "¥200"}],
                                         "wantNum": "10",
-                                        "userNick": "seller",
-                                        "city": "北京",
+                                        "userNickName": "seller",
+                                        "area": "北京",
                                         "picUrl": "http://example.com/img.jpg",
-                                        "freeDelivery": True,
+                                        # 移除 freeDelivery，API 无此字段
                                     },
                                     "clickParam": {"args": {"item_id": "123456"}},
                                 }
@@ -188,7 +188,7 @@ class TestHttpApiSearchClientResponse:
         assert items[0].title == "测试商品"
         assert items[0].price == "¥100"
         assert items[0].seller_nick == "seller"
-        assert items[0].is_free_ship == True
+        assert items[0].is_free_ship == False  # API 无此字段，始终为 False
 
     def test_parse_response_empty(self):
         """测试空响应"""
