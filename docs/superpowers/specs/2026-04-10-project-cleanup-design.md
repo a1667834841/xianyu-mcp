@@ -104,23 +104,74 @@
 ### Phase 1: 清理 Git Worktrees
 1. 删除 `.worktrees/` 下所有目录
 2. 删除对应的 git 分支
+3. **验证**: 无需测试验证（物理目录清理）
 
 ### Phase 2: 清理空目录
 1. 删除 `src/services/` 及所有子目录
 2. 删除 `src/api/` 及所有子目录
+3. **验证**: 运行 `python -c "from src import XianyuApp"` 验证导入正常
 
 ### Phase 3: 清理打包遗留
 1. 删除 `UNKNOWN.egg-info/` 目录
+2. **验证**: 无需测试验证（打包遗留清理）
 
 ### Phase 4: 清理未使用代码
-1. 编辑 `src/browser.py`，删除同步方法
-2. 编辑 `src/search_api.py`，删除 `PageApiSearchClient` 类
-3. 编辑 `src/core.py`，删除 `_build_page_api_runner()` 函数
-4. 编辑 `src/session.py`，删除重复的 `get_token()` 相关方法
+每步执行后立即验证：
 
-### Phase 5: 验证
-1. 运行测试确保功能正常
-2. 检查导入是否正确
+#### 4.1 清理 browser.py 同步方法
+1. 删除同步方法
+2. **验证**: 运行 `pytest tests/test_browser.py -v`
+
+#### 4.2 清理 search_api.py PageApiSearchClient
+1. 删除 PageApiSearchClient 相关代码
+2. 更新 tests/test_search_api.py
+3. **验证**: 运行 `pytest tests/test_search_api.py -v`
+
+#### 4.3 清理 core.py _build_page_api_runner
+1. 删除 _build_page_api_runner 函数
+2. **验证**: 运行 `pytest tests/test_core.py -v`
+
+#### 4.4 清理 session.py 重复 get_token
+1. 删除重复的 get_token 方法
+2. **验证**: 运行 `pytest tests/test_session.py -v`
+
+### Phase 5: 全量验证
+
+#### 5.1 单元测试全量运行
+```bash
+pytest tests/ -v
+```
+
+#### 5.2 Python 层端到端测试
+验证核心功能流程：
+```bash
+# 测试搜索功能
+python -c "
+import asyncio
+from src import XianyuApp, AsyncChromeManager
+
+async def test():
+    browser = AsyncChromeManager(host='localhost', port=9222)
+    app = XianyuApp(browser)
+    await app.browser.ensure_running()
+    result = await app.check_session()
+    print(f'Session valid: {result}')
+    # 其他核心功能验证...
+
+asyncio.run(test())
+"
+```
+
+#### 5.3 MCP 接口层面验证
+启动 MCP Server 并验证所有接口可用：
+```bash
+# 启动 HTTP MCP Server
+python mcp_server/http_server.py
+
+# 验证接口调用（通过 REST endpoints）
+curl http://localhost:8080/rest/check_session
+curl -X POST http://localhost:8080/rest/search -d '{"keyword":"test","rows":5}'
+```
 
 ## 四、风险评估
 
