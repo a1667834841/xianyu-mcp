@@ -46,6 +46,22 @@ docker compose ps
 | `XIANYU_HOST_DATA_DIR` | 宿主机数据目录 | `./data` |
 | `XIANYU_USER_ID` | 当前用户目录名 | `default` |
 
+### 浏览器池环境变量
+
+新增环境变量：
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `BROWSER_POOL_SIZE` | Chrome 槽位数量 | `1` |
+| `BROWSER_CDP_START_PORT` | 浏览器池起始 CDP 端口 | `9222` |
+| `BROWSER_PROFILE_ROOT` | 浏览器池 profile 根目录 | `/data/browser-pool` |
+
+浏览器容器会一次性拉起多个 Chrome 进程：
+
+- `slot-1 -> browser:9222`
+- `slot-2 -> browser:9223`
+- `slot-3 -> browser:9224`
+
 持久化目录：
 
 - 浏览器 Profile：`${XIANYU_HOST_DATA_DIR}/users/${XIANYU_USER_ID}/chrome-profile`

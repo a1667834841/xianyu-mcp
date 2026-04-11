@@ -72,6 +72,7 @@ def _install_fake_mcp(monkeypatch):
         def __init__(self, *args, **kwargs):
             self.args = args
             self.kwargs = kwargs
+            self.name = kwargs.get("name")
 
     class TextContent:
         def __init__(self, type: str, text: str):
@@ -243,6 +244,9 @@ def _make_search_item(item_id: str) -> SearchItem:
 async def test_xianyu_search_returns_requested_and_stop_reason(monkeypatch):
     _install_fake_mcp(monkeypatch)
     import mcp_server.http_server as http_server
+    from dataclasses import replace
+    from src.multi_user_manager import MultiUserManager
+    from src.multi_user_registry import UserRegistryEntry
 
     class FakeBrowser:
         async def ensure_running(self):
@@ -261,7 +265,26 @@ async def test_xianyu_search_returns_requested_and_stop_reason(monkeypatch):
                 stale_pages=3,
             )
 
-    monkeypatch.setattr(http_server, "get_app", lambda: FakeAppWithSearch())
+    class FakeManager(MultiUserManager):
+        def __init__(self):
+            pass
+
+        async def search(self, keyword, user_id=None, **options):
+            return {
+                "success": True,
+                "user_id": "user-001",
+                "slot_id": "slot-1",
+                "requested": 100,
+                "total": 1,
+                "stop_reason": "stale_limit",
+                "stale_pages": 3,
+                "items": [],
+                "engine_used": "http_api",
+                "fallback_reason": None,
+                "pages_fetched": 1,
+            }
+
+    monkeypatch.setattr(http_server, "get_manager", lambda: FakeManager())
 
     payload = json.loads(await http_server.xianyu_search(keyword="键盘", rows=100))
 
@@ -276,27 +299,23 @@ async def test_xianyu_search_returns_engine_metadata(monkeypatch):
     _install_fake_mcp(monkeypatch)
     import mcp_server.http_server as http_server
 
-    class FakeBrowser:
-        async def ensure_running(self):
-            return True
+    class FakeManager:
+        async def search(self, keyword, user_id=None, **options):
+            return {
+                "success": True,
+                "user_id": "user-001",
+                "slot_id": "slot-1",
+                "requested": 10,
+                "total": 1,
+                "stop_reason": "target_reached",
+                "stale_pages": 0,
+                "items": [],
+                "engine_used": "page_api",
+                "fallback_reason": None,
+                "pages_fetched": 1,
+            }
 
-    class FakeAppWithMetadata:
-        def __init__(self):
-            self.browser = FakeBrowser()
-
-        async def search_with_meta(self, keyword: str, **options):
-            return SearchOutcome(
-                items=[_make_search_item("item-1")],
-                requested_rows=10,
-                returned_rows=1,
-                stop_reason="target_reached",
-                stale_pages=0,
-                engine_used="page_api",
-                fallback_reason=None,
-                pages_fetched=1,
-            )
-
-    monkeypatch.setattr(http_server, "get_app", lambda: FakeAppWithMetadata())
+    monkeypatch.setattr(http_server, "get_manager", lambda: FakeManager())
 
     payload = json.loads(await http_server.xianyu_search(keyword="泡泡玛特", rows=10))
 
@@ -310,16 +329,16 @@ async def test_xianyu_check_session_returns_formatted_last_updated_at(monkeypatc
     _install_fake_mcp(monkeypatch)
     import mcp_server.http_server as http_server
 
-    class FakeAppWithSessionTime:
-        async def check_session(self):
+    class FakeManager:
+        async def check_session(self, user_id):
             return {
                 "valid": True,
                 "last_updated_at": "2026-04-09 15:16:17",
             }
 
-    monkeypatch.setattr(http_server, "get_app", lambda: FakeAppWithSessionTime())
+    monkeypatch.setattr(http_server, "get_manager", lambda: FakeManager())
 
-    payload = json.loads(await http_server.xianyu_check_session())
+    payload = json.loads(await http_server.xianyu_check_session(user_id="user-001"))
 
     assert payload["valid"] is True
     assert payload["last_updated_at"] == "2026-04-09 15:16:17"
@@ -330,13 +349,13 @@ async def test_xianyu_check_session_returns_null_when_last_updated_missing(monke
     _install_fake_mcp(monkeypatch)
     import mcp_server.http_server as http_server
 
-    class FakeAppWithoutSessionTime:
-        async def check_session(self):
+    class FakeManager:
+        async def check_session(self, user_id):
             return {"valid": False, "last_updated_at": None}
 
-    monkeypatch.setattr(http_server, "get_app", lambda: FakeAppWithoutSessionTime())
+    monkeypatch.setattr(http_server, "get_manager", lambda: FakeManager())
 
-    payload = json.loads(await http_server.xianyu_check_session())
+    payload = json.loads(await http_server.xianyu_check_session(user_id="user-001"))
 
     assert payload["valid"] is False
     assert payload["last_updated_at"] is None
@@ -410,7 +429,7 @@ async def test_stdio_list_tools_includes_browser_overview(monkeypatch):
     import mcp_server.server as stdio_server
 
     tools = await stdio_server.list_tools()
-    tool_names = [tool.kwargs["name"] for tool in tools]
+    tool_names = [tool.name for tool in tools]
 
     assert "xianyu_browser_overview" in tool_names
 

@@ -98,6 +98,21 @@ help skills
 搜索盲盒商品，rows=5
 ```
 
+## MCP Dev CLI
+
+本地调试 MCP 方法时，可以直接调用仓库里的 `scripts/mcp-dev`：
+
+```bash
+./scripts/mcp-dev call xianyu_list_users
+./scripts/mcp-dev call xianyu_show_qr --user-id user-001
+./scripts/mcp-dev call xianyu_check_session --user-id user-001
+./scripts/mcp-dev call xianyu_search --user-id user-001 --keyword 机械键盘 --rows 5
+```
+
+- 默认请求地址为 `http://127.0.0.1:${MCP_HOST_PORT:-8080}/mcp`；若该 `/mcp` 地址返回 `404`，脚本会自动回退到对应的 `/sse` 握手流程，再通过返回的 `/messages/?session_id=...` 地址继续调用
+- `MCP_DEV_URL` 用于覆盖首次请求的 MCP 地址；只有当该 URL 以 `/mcp` 结尾且返回 `404` 时，脚本才会自动派生对应的 `/sse`
+- 命令行参数使用 `--kebab-case value` 形式，脚本会自动转换为 MCP 请求里的 `snake_case`
+
 ## 常见问题
 
 | 问题 | 解决方案 |

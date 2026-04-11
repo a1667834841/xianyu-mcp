@@ -10,6 +10,7 @@ import base64
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, asdict
 import logging
+from urllib.parse import parse_qs, urlparse
 
 try:
     from .browser import AsyncChromeManager
@@ -511,7 +512,13 @@ class _ItemCopierImpl:
         condition: str = "全新",
     ) -> Dict[str, Any]:
         """根据对标商品发布新商品"""
-        result = {"success": False, "item_id": None, "error": None, "item_data": None}
+        result = {
+            "success": False,
+            "item_id": None,
+            "error": None,
+            "item_data": None,
+            "final_title": None,
+        }
 
         print("[ItemCopier] 步骤 1: 获取对标商品数据...")
         item_data = await self.capture_item_detail(item_url)
@@ -552,12 +559,17 @@ class _ItemCopierImpl:
         print("[ItemCopier] 步骤 4: 等待 AI 生成内容...")
         await asyncio.sleep(3)
 
-        print("[ItemCopier] 步骤 5: 填充描述...")
+        print("[ItemCopier] 步骤 5: 填充标题...")
+        title_to_use = new_title or item_data.title
+        await self._fill_title(title_to_use)
+        await asyncio.sleep(0.5)
+
+        print("[ItemCopier] 步骤 6: 填充描述...")
         desc_to_use = new_description or item_data.description
         await self._fill_description(desc_to_use)
         await asyncio.sleep(0.5)
 
-        print("[ItemCopier] 步骤 6: 填充价格...")
+        print("[ItemCopier] 步骤 7: 填充价格...")
         price_to_use = new_price or item_data.min_price
         if original_price is None:
             original_price = price_to_use * 1.5
@@ -565,30 +577,30 @@ class _ItemCopierImpl:
         await asyncio.sleep(0.5)
 
         if item_data.category:
-            print("[ItemCopier] 步骤 7: 选择分类...")
+            print("[ItemCopier] 步骤 8: 选择分类...")
             await self._select_category(item_data.category)
             await asyncio.sleep(0.5)
 
         if item_data.brand:
-            print(f"[ItemCopier] 步骤 8: 选择品牌...")
+            print(f"[ItemCopier] 步骤 9: 选择品牌...")
             await self._fill_brand(item_data.brand)
             await asyncio.sleep(0.5)
 
         if item_data.model:
-            print(f"[ItemCopier] 步骤 8.1: 填写型号...")
+            print(f"[ItemCopier] 步骤 9.1: 填写型号...")
             await self._fill_model(item_data.model)
             await asyncio.sleep(0.5)
 
-        print(f"[ItemCopier] 步骤 9: 选择成色...")
+        print(f"[ItemCopier] 步骤 10: 选择成色...")
         await self._select_condition(condition)
         await asyncio.sleep(0.5)
 
         if item_data.is_free_ship:
-            print("[ItemCopier] 步骤 10: 设置包邮...")
+            print("[ItemCopier] 步骤 11: 设置包邮...")
             await self._set_free_ship()
             await asyncio.sleep(0.5)
 
-        print("[ItemCopier] 步骤 11: 尝试发布或保存草稿...")
+        print("[ItemCopier] 步骤 12: 尝试发布或保存草稿...")
         await self._try_publish_or_save_draft()
         await asyncio.sleep(1)
 
@@ -599,10 +611,159 @@ class _ItemCopierImpl:
             )
             print("[ItemCopier] 已保存发布预览截图")
 
+        publish_outcome = await self._capture_publish_outcome(
+            expected_title=title_to_use
+        )
+        result["item_id"] = publish_outcome.get("item_id")
+        result["final_title"] = publish_outcome.get("final_title")
+        result["publish_state"] = publish_outcome.get("publish_state")
+
         result["success"] = True
         print("[ItemCopier] 表单填充完成")
 
         return result
+
+    async def _capture_publish_outcome(
+        self,
+        expected_title: Optional[str] = None,
+        timeout_seconds: float = 10.0,
+        poll_interval: float = 0.5,
+    ) -> Dict[str, Optional[str]]:
+        """采集发布后的页面状态，尽量回收 item_id。"""
+        page = self.page
+        if not page:
+            return {
+                "publish_state": "unknown",
+                "item_id": None,
+                "final_title": expected_title,
+            }
+
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        while asyncio.get_running_loop().time() < deadline:
+            item_id = self._extract_item_id_from_url(getattr(page, "url", "") or "")
+            if item_id:
+                return {
+                    "publish_state": "published",
+                    "item_id": item_id,
+                    "final_title": await self._get_current_title() or expected_title,
+                }
+
+            if await self._is_app_publish_required():
+                return {
+                    "publish_state": "draft_saved",
+                    "item_id": None,
+                    "final_title": await self._get_current_title() or expected_title,
+                }
+
+            if await self._is_publish_success_page():
+                return {
+                    "publish_state": "published",
+                    "item_id": None,
+                    "final_title": await self._get_current_title() or expected_title,
+                }
+
+            await asyncio.sleep(poll_interval)
+
+        return {
+            "publish_state": "submitted",
+            "item_id": self._extract_item_id_from_url(getattr(page, "url", "") or ""),
+            "final_title": await self._get_current_title() or expected_title,
+        }
+
+    def _extract_item_id_from_url(self, url: str) -> Optional[str]:
+        """从发布成功后的详情页 URL 中提取商品 ID。"""
+        if not url:
+            return None
+
+        try:
+            query = parse_qs(urlparse(url).query)
+            for key in ("id", "itemId"):
+                values = query.get(key)
+                if values and values[0]:
+                    return values[0]
+        except Exception:
+            return None
+
+        return None
+
+    async def _fill_title(self, title: str) -> bool:
+        """填写商品标题，避免沿用旧草稿或 AI 自动标题。"""
+        try:
+            page = self.page
+            if not page:
+                return False
+
+            title_input = page.locator('input[placeholder*="标题"]').first
+            if not await title_input.is_visible(timeout=3000):
+                title_input = page.locator('textarea[placeholder*="标题"]').first
+            if not await title_input.is_visible(timeout=3000):
+                return False
+
+            await title_input.click()
+            await title_input.fill(title)
+            await title_input.press("Tab")
+            return True
+        except:
+            return False
+
+    async def _get_current_title(self) -> Optional[str]:
+        """读取发布页当前标题，便于确认没有串用旧草稿。"""
+        try:
+            page = self.page
+            if not page:
+                return None
+
+            title_input = page.locator('input[placeholder*="标题"]').first
+            if await title_input.is_visible(timeout=1000):
+                value = await title_input.input_value()
+                return value.strip() or None
+
+            title_input = page.locator('textarea[placeholder*="标题"]').first
+            if await title_input.is_visible(timeout=1000):
+                value = await title_input.input_value()
+                return value.strip() or None
+
+            return None
+        except:
+            return None
+
+    async def _is_app_publish_required(self) -> bool:
+        """识别需要转到闲鱼 APP 完成发布的受限弹窗。"""
+        page = self.page
+        if not page:
+            return False
+
+        indicators = [
+            "text=扫码去APP发布",
+            "text=网页版暂不支持发布此分类",
+            "text=请到闲鱼APP内完成发布",
+        ]
+
+        for selector in indicators:
+            try:
+                if await page.locator(selector).first.is_visible(timeout=200):
+                    return True
+            except Exception:
+                continue
+
+        return False
+
+    async def _is_publish_success_page(self) -> bool:
+        """识别已进入卖家商品详情页。"""
+        page = self.page
+        if not page:
+            return False
+
+        indicators = ["text=下架", "text=编辑", "text=删除"]
+        visible_count = 0
+        for selector in indicators:
+            try:
+                if await page.locator(selector).first.is_visible(timeout=200):
+                    visible_count += 1
+            except Exception:
+                continue
+
+        return visible_count >= 2
 
     async def _wait_for_publish_ready(
         self, timeout_seconds: float = 10.0, poll_interval: float = 0.25
@@ -886,6 +1047,9 @@ class _ItemCopierImpl:
             publish_btn = page.locator('button[class*="publish-button"]').first
             if await publish_btn.is_visible() and await publish_btn.is_enabled():
                 print("[ItemCopier] 发布按钮可点击")
+                await publish_btn.click()
+                await asyncio.sleep(1)
+                print("[ItemCopier] 已点击发布按钮")
                 return True
 
             return False

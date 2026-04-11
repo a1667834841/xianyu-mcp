@@ -167,6 +167,15 @@ https://passport.goofish.com/qrcodeCheck.htm?lgToken=xxx
 ============================================================
 ```
 
+## 多用户模式
+
+- 浏览器容器支持通过 `BROWSER_POOL_SIZE` 启动多个 Chrome 槽位
+- 新增用户使用 `xianyu_create_user`
+- 用户登录使用 `xianyu_show_qr(user_id)` 或 `xianyu_login(user_id)`
+- 查看全部状态使用 `xianyu_list_users`
+- `publish` 必须传 `user_id`
+- `search` 可选传 `user_id`，不传时随机挑选可用账号
+
 ## License
 
 MIT

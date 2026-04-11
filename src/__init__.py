@@ -27,6 +27,7 @@ __all__ = [
     "CookieKeepaliveService",
     "PageCoordinator",
     "PageLease",
+    "MultiUserManager",
     "XianyuApp",
     # 数据类
     "SearchItem",
@@ -49,6 +50,8 @@ __all__ = [
     "AppSettings",
     "load_settings",
 ]
+
+from .multi_user_manager import MultiUserManager
 
 from .settings import (
     AppSettings,

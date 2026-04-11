@@ -1,21 +1,24 @@
 services:
   # 浏览器服务
   browser:
-    image: registry.cn-hangzhou.aliyuncs.com/ggball/chrome-headless-shell-zh:latest
-    container_name: xianyu-browser
+    image: ${XIANYU_BROWSER_IMAGE:-xianyu-browser:local}
+    build:
+      context: .
+      dockerfile: docker/browser.Dockerfile
     restart: unless-stopped
-    ports:
-      - "9222:9222"
     environment:
+      - BROWSER_POOL_SIZE=${BROWSER_POOL_SIZE:-1}
+      - BROWSER_CDP_START_PORT=${BROWSER_CDP_START_PORT:-9222}
+      - BROWSER_PROFILE_ROOT=/data/browser-pool
+      - CHROME_BIN=${CHROME_BIN:-/headless-shell/headless-shell}
       - HTTP_PROXY=${HTTP_PROXY:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
       - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1}
       - XIANYU_USER_ID=${XIANYU_USER_ID:-default}
-    command:
-      - --user-data-dir=/data/users/${XIANYU_USER_ID:-default}/chrome-profile
-      - --disable-dev-shm-usage
     volumes:
-      - ${XIANYU_HOST_DATA_DIR:-./data}/users/${XIANYU_USER_ID:-default}/chrome-profile:/data/users/${XIANYU_USER_ID:-default}/chrome-profile
+      - ${XIANYU_HOST_DATA_DIR:-./data}/browser-pool:/data/browser-pool
+    ports:
+      - "${BROWSER_PORT_1:-9222}:9222"
     shm_size: 2g
     networks:
       - xianyu-net
@@ -26,13 +29,15 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    container_name: xianyu-mcp
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${MCP_HOST_PORT:-8080}:8080"
     environment:
       - CDP_HOST=${CDP_HOST:-browser}
       - CDP_PORT=${CDP_PORT:-9222}
+      - BROWSER_POOL_SIZE=${BROWSER_POOL_SIZE:-1}
+      - BROWSER_CDP_START_PORT=${BROWSER_CDP_START_PORT:-9222}
+      - BROWSER_PROFILE_ROOT=/data/browser-pool
       - MCP_HOST=${MCP_HOST:-0.0.0.0}
       - MCP_PORT=${MCP_PORT:-8080}
       - TZ=Asia/Shanghai
@@ -47,7 +52,8 @@ services:
       - CF_BUCKET_NAME=${CF_BUCKET_NAME:-blog}
       - CF_PUBLIC_DOMAIN=${CF_PUBLIC_DOMAIN:-https://img.ggball.top}
     volumes:
-      - ${XIANYU_HOST_DATA_DIR:-./data}/users/${XIANYU_USER_ID:-default}/tokens:/data/users/${XIANYU_USER_ID:-default}/tokens
+      - ${XIANYU_HOST_DATA_DIR:-./data}/users:/data/users
+      - ${XIANYU_HOST_DATA_DIR:-./data}/registry:/data/registry
     healthcheck:
       test: ["CMD-SHELL", "curl -f -s --max-time 3 http://localhost:8080/sse | head -1 | grep -q 'event: endpoint' || exit 1"]
       interval: 30s

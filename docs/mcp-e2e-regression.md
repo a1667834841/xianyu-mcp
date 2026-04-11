@@ -39,7 +39,7 @@
 ### 环境要求
 
 - 已安装 Docker 和 Docker Compose
-- 在仓库根目录 `/opt/dockercompose/xianyu` 执行命令
+- 在当前仓库根目录执行命令
 - 本机 `8080`、`9222` 端口未被其他服务占用
 
 ### 端口约定
@@ -53,16 +53,20 @@
 
 默认数据目录来自 `docker-compose.yml`：
 
-- 浏览器 Profile：`${XIANYU_HOST_DATA_DIR:-./data}/users/${XIANYU_USER_ID:-default}/chrome-profile`
-- Token/Cookie 快照：`${XIANYU_HOST_DATA_DIR:-./data}/users/${XIANYU_USER_ID:-default}/tokens`
+- 浏览器池数据：`${XIANYU_HOST_DATA_DIR:-./data}/browser-pool`
+- 多用户数据根目录：`${XIANYU_HOST_DATA_DIR:-./data}/users`
+- 用户注册表：`${XIANYU_HOST_DATA_DIR:-./data}/registry`
 
-这些目录不要在回归前随意删除，否则会把既有登录态一起清掉。
+其中用户级登录态和 Cookie 快照会保存在 `${XIANYU_HOST_DATA_DIR:-./data}/users/<user_id>/...` 下。
+
+这些目录不要在回归前随意删除，否则会把既有登录态、用户槽位映射和浏览器池状态一起清掉。
 
 ### 登录态说明
 
-- `xianyu_check_session` / `/rest/check_session` 返回 `valid=true`：说明当前登录态可直接复用
-- 返回 `valid=false`：说明 Cookie 已过期，但只要 `show_qr`、`login` 能正常给出二维码，仍可判定二维码链路通过
-- `xianyu_login` 与 `xianyu_show_qr` 的目标，是验证二维码生成和返回链路，不要求回归时必须现场扫码
+- 多用户 MCP 回归前，先确认本次要验证的 `user_id`
+- `xianyu_check_session --user-id <user_id>` 返回 `valid=true`：说明该用户登录态可直接复用
+- 返回 `valid=false`：说明该用户 Cookie 已过期，但只要 `show_qr`、`login` 能正常给出二维码，仍可判定二维码链路通过
+- `xianyu_login` 与 `xianyu_show_qr` 的目标，是验证指定用户的二维码生成和返回链路，不要求回归时必须现场扫码
 
 ## 重新编译镜像步骤
 
@@ -93,10 +97,14 @@ docker compose ps
 
 ### 如果遇到旧容器冲突
 
-若出现容器名冲突，例如 `xianyu-mcp` 或 `xianyu-browser` 已存在，可执行：
+若出现容器名或端口冲突，先用 `docker ps` 确认当前 compose 项目实际生成的容器名。
+
+例如默认项目名下，常见容器名可能是 `xianyu-mcp-server-1`、`xianyu-browser-1`；在其他 worktree 或目录下，前缀可能不同。
+
+确认后可执行：
 
 ```bash
-docker rm -f xianyu-mcp xianyu-browser
+docker rm -f <实际的 mcp-server 容器名> <实际的 browser 容器名>
 docker compose up -d browser mcp-server
 docker compose ps
 ```
@@ -125,6 +133,10 @@ curl: (28) Operation timed out after 5001 milliseconds with 81 bytes received
 - `curl` 因 `--max-time` 超时退出是正常的，因为 SSE 本来就是长连接
 
 ## REST 调试验证
+
+这一组 `/rest/*` 接口主要用于底层调试和兼容性检查。
+
+注意：当前项目主线已经是多用户 MCP 模型，而 `/rest/check_session`、`/rest/search`、`/rest/show_qr` 仍是未显式传 `user_id` 的单用户调试接口。因此这部分只能证明服务进程、浏览器连接和基础链路正常，不等价于多用户 MCP 主流程已完成验证。
 
 ### 1. `/rest/check_session`
 
@@ -189,145 +201,75 @@ curl --max-time 60 http://127.0.0.1:8080/rest/show_qr
 - 未登录时返回 `qr_code` 也算通过
 - 冷启动时可能比 `/rest/search` 慢，建议给 `60s` 超时
 
-## MCP E2E 验证
+## 业务级 MCP 回归
 
-这一节是真正的 MCP 端到端回归，不是只测 REST 包装接口。
+这一节用于验证真实 MCP 工具链路是否可用，重点是业务级回归，而不是手工验证底层协议报文。
+
+如果你要排查部署、容器、协议握手问题，优先看前面的镜像重建、`/sse` 健康检查和 `/rest/*` 调试步骤；如果这些都正常，日常回归建议直接使用 `scripts/mcp-dev`。
+
+注意：当前项目已经是多用户结构，业务级回归应先确定要验证的 `user_id`，再执行后续命令。
 
 ### 验证目标
 
-必须依次验证：
+推荐至少覆盖以下工具：
 
-1. 通过 `/sse` 获取 `session_id`
-2. 调用 `initialize`
-3. 调用 `tools/list`
-4. 调用 `tools/call`
-5. 至少覆盖以下工具：
-   `xianyu_check_session`、`xianyu_search`、`xianyu_refresh_token`、`xianyu_show_qr`、`xianyu_login`
+1. `xianyu_list_users`
+2. `xianyu_check_session`
+3. `xianyu_show_qr`
+4. `xianyu_search`
+5. 如有需要，再补 `xianyu_refresh_token`
 
-### 推荐执行脚本
+推荐前置检查：
 
-在仓库根目录执行以下脚本：
+1. 先执行 `./scripts/mcp-dev call xianyu_list_users`
+2. 从返回结果里选一个已存在的 `user_id`，例如 `user-001`
+3. 后续所有需要用户上下文的命令都显式传 `--user-id <user_id>`
+
+### 推荐命令流程
+
+在仓库根目录执行：
 
 ```bash
-python3 - <<'PY'
-import json, queue, threading, time
-import requests
-
-base = 'http://127.0.0.1:8080'
-q = queue.Queue()
-state = {'session_id': None}
-
-resp = requests.get(f'{base}/sse', stream=True, timeout=(5, 120))
-resp.raise_for_status()
-
-
-def reader():
-    event = None
-    data_lines = []
-    for raw in resp.iter_lines(decode_unicode=True):
-        if raw is None:
-            continue
-        line = raw.strip()
-        if not line:
-            if event or data_lines:
-                data = '\n'.join(data_lines)
-                q.put((event, data))
-                if event == 'endpoint' and 'session_id=' in data:
-                    state['session_id'] = data.split('session_id=')[1]
-                event = None
-                data_lines = []
-            continue
-        if line.startswith('event:'):
-            event = line.split(':', 1)[1].strip()
-        elif line.startswith('data:'):
-            data_lines.append(line.split(':', 1)[1].strip())
-
-
-threading.Thread(target=reader, daemon=True).start()
-
-
-def wait_for(predicate, timeout=60):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            evt, data = q.get(timeout=1)
-        except queue.Empty:
-            continue
-        print(f'SSE event={evt} data={data[:200]}')
-        if predicate(evt, data):
-            return evt, data
-    raise TimeoutError('wait_for timeout')
-
-
-wait_for(lambda e, d: e == 'endpoint' and 'session_id=' in d, timeout=10)
-session_id = state['session_id']
-print('SESSION_ID=', session_id)
-post_url = f'{base}/messages/?session_id={session_id}'
-
-
-def send(payload):
-    r = requests.post(post_url, json=payload, timeout=30)
-    print('POST', payload['method'], r.status_code)
-    r.raise_for_status()
-
-
-send({
-    'jsonrpc': '2.0',
-    'id': 1,
-    'method': 'initialize',
-    'params': {
-        'protocolVersion': '2024-11-05',
-        'clientInfo': {'name': 'regression-doc', 'version': '1.0'},
-        'capabilities': {}
-    }
-})
-wait_for(lambda e, d: '"id":1' in d, timeout=30)
-
-send({'jsonrpc': '2.0', 'method': 'notifications/initialized', 'params': {}})
-time.sleep(1)
-
-send({'jsonrpc': '2.0', 'id': 3, 'method': 'tools/list', 'params': {}})
-_, data = wait_for(lambda e, d: '"id":3' in d and 'xianyu_search' in d, timeout=30)
-msg = json.loads(data)
-print('TOOLS=', [tool['name'] for tool in msg['result']['tools']])
-
-calls = [
-    (4, 'xianyu_check_session', {}),
-    (5, 'xianyu_search', {'keyword': 'iphone', 'rows': 2}),
-    (6, 'xianyu_refresh_token', {}),
-    (7, 'xianyu_show_qr', {}),
-    (8, 'xianyu_login', {}),
-]
-
-for req_id, name, arguments in calls:
-    send({
-        'jsonrpc': '2.0',
-        'id': req_id,
-        'method': 'tools/call',
-        'params': {'name': name, 'arguments': arguments}
-    })
-    _, data = wait_for(lambda e, d, req_id=req_id: f'"id":{req_id}' in d, timeout=120)
-    msg = json.loads(data)
-    content = msg['result'].get('content', [])
-    text = content[0].get('text') if content else ''
-    print(f'TOOL {name} RESULT {text[:500]}')
-
-resp.close()
-PY
+./scripts/mcp-dev call xianyu_list_users
+./scripts/mcp-dev call xianyu_check_session --user-id user-001
+./scripts/mcp-dev call xianyu_show_qr --user-id user-001
+./scripts/mcp-dev call xianyu_check_session --user-id user-001
+./scripts/mcp-dev call xianyu_search --user-id user-001 --keyword 机械键盘 --rows 3
 ```
 
-### 本次实际回归结果
+如果你要回归 E2E 栈而不是默认本地端口，带上 `MCP_DEV_URL`：
 
-本次执行时，实际观察到：
+```bash
+MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_list_users
+MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_check_session --user-id user-001
+MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_show_qr --user-id user-001
+MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_search --user-id user-001 --keyword 机械键盘 --rows 3
+```
 
-- `initialize` 返回成功
-- `tools/list` 返回 6 个工具：
-  `xianyu_login`、`xianyu_search`、`xianyu_publish`、`xianyu_refresh_token`、`xianyu_check_session`、`xianyu_show_qr`
-- `xianyu_check_session` 返回 `success=true`，且当前登录态为 `valid=false`
-- `xianyu_search` 返回 `success=true`，可正常返回商品列表
-- `xianyu_refresh_token` 返回 `success=true`
-- `xianyu_show_qr` 返回 `success=true`，包含 `qr_code.url` 与 `qr_code.public_url`
-- `xianyu_login` 返回 `success=true`，同样可返回扫码二维码数据
+补充说明：
+
+- `scripts/mcp-dev` 默认请求 `http://127.0.0.1:${MCP_HOST_PORT:-8080}/mcp`
+- 如果该 `/mcp` 地址返回 `404`，脚本会自动回退到对应的 `/sse` 流程
+- 命令行参数使用 `--kebab-case value`，脚本会自动转换成 MCP 请求里的 `snake_case`
+
+### 判定规则
+
+- `xianyu_list_users` 能正常返回用户和槽位信息，说明基础工具调用可用
+- `xianyu_check_session` 返回结构化结果即可；`valid=true` 或 `valid=false` 都不影响链路判定
+- `xianyu_show_qr` 在未登录时能返回二维码信息，就说明二维码链路可用
+- `xianyu_search` 能返回商品结果，说明业务侧主链路可用
+- 如果需要验证续期链路，再补跑 `xianyu_refresh_token`
+
+### 本次推荐回归结果示例
+
+按照上述命令流程，预期应观察到：
+
+- `xianyu_list_users` 返回已配置用户列表
+- `xianyu_check_session` 返回 `success=true`，并带当前登录态信息
+- `xianyu_show_qr` 返回 `success=true`；未登录时包含 `qr_code`，已登录时可能直接返回已登录状态
+- `xianyu_search` 返回 `success=true`，并包含商品结果
+
+如果上述命令失败，但前面的 `/sse` 检查是正常的，再进一步排查 `scripts/mcp-dev` 指向的地址、目标用户数据目录和当前登录态。
 
 ## `xianyu_publish` 的验证边界
 
@@ -337,6 +279,7 @@ PY
 
 - MCP `tools/list` 中存在 `xianyu_publish`
 - MCP `tools/call` 到 `xianyu_publish` 的请求链路是通的
+- 发布链路验证时必须指定一个已存在且可用的 `user_id`
 - 浏览器可被拉起，对标商品页可被访问，表单填充逻辑开始执行
 
 不能仅靠一次基础回归就保证的内容：
@@ -362,17 +305,16 @@ PY
 - `browser`、`mcp-server` 容器正常启动，`mcp-server` 进入 `healthy`
 - `/sse` 返回 `event: endpoint` 和有效 `session_id`
 - `/rest/check_session`、`/rest/search`、`/rest/show_qr` 均可返回有效 JSON
-- MCP `initialize`、`tools/list` 成功
-- MCP `tools/call` 成功覆盖：
-  `xianyu_check_session`、`xianyu_search`、`xianyu_refresh_token`、`xianyu_show_qr`、`xianyu_login`
+- 业务级 MCP 回归命令可成功覆盖：
+  `xianyu_list_users`、`xianyu_check_session`、`xianyu_show_qr`、`xianyu_search`
 
 ### 部分通过
 
 满足以下情况之一：
 
 - 基础链路都通，但当前登录态过期，`check_session` 返回 `valid=false`
-- `show_qr` / `login` 能返回二维码，但未现场扫码确认登录
-- MCP 链路通过，但 `xianyu_publish` 未做真实发布验证
+- `show_qr` 能返回二维码，但未现场扫码确认登录
+- 业务级 MCP 回归通过，但 `xianyu_publish` 未做真实发布验证
 
 ### 失败
 
@@ -382,8 +324,8 @@ PY
 - 容器无法启动或 `mcp-server` 长时间不进入 `healthy`
 - `/sse` 无法返回 `event: endpoint`
 - `/rest/search`、`/rest/show_qr`、`/rest/check_session` 持续 500 或无响应
-- `initialize`、`tools/list`、`tools/call` 任一步无法完成
-- `tools/list` 缺少应有工具，或关键工具调用直接报错
+- `scripts/mcp-dev` 关键命令持续失败
+- 关键工具调用直接报错，且不是登录态过期这类业务外部因素
 
 ## 故障排查
 

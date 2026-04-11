@@ -78,6 +78,16 @@ def _load_config(path: Path | None = None) -> MutableMapping[str, Any]:
         return {}
 
 
+def _discover_raw_config(config_path: Path | None = None) -> MutableMapping[str, Any]:
+    raw = _load_config(config_path)
+    return raw if isinstance(raw, MutableMapping) else {}
+
+
+def load_raw_config(config_path: Path | None = None) -> MutableMapping[str, Any]:
+    """Load the raw project config for multi-user/global settings."""
+    return dict(_discover_raw_config(config_path))
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -158,6 +168,30 @@ class AppSettings:
     search: SearchSettings
 
 
+def build_user_settings(
+    user_id: str,
+    token_file: Path,
+    chrome_user_data_dir: Path,
+    data_root: Path,
+    keepalive_enabled: bool = True,
+    keepalive_interval_minutes: int = DEFAULT_KEEPALIVE_INTERVAL_MINUTES,
+    max_stale_pages: int = DEFAULT_SEARCH_MAX_STALE_PAGES,
+) -> AppSettings:
+    return AppSettings(
+        storage=StorageSettings(
+            data_root=data_root,
+            user_id=user_id,
+            token_file=token_file,
+            chrome_user_data_dir=chrome_user_data_dir,
+        ),
+        keepalive=KeepaliveSettings(
+            enabled=keepalive_enabled,
+            interval_minutes=keepalive_interval_minutes,
+        ),
+        search=SearchSettings(max_stale_pages=max_stale_pages),
+    )
+
+
 def load_settings(config_path: Path | None = None) -> AppSettings:
     """Load settings with env var precedence, config fallbacks, and sane defaults."""
 
@@ -221,14 +255,25 @@ def load_settings(config_path: Path | None = None) -> AppSettings:
     )
 
     keepalive_settings = KeepaliveSettings(
-        enabled=_env_bool("XIANYU_KEEPALIVE_ENABLED", _coerce_bool(keepalive_cfg.get("enabled"), DEFAULT_KEEPALIVE_ENABLED)),
-        interval_minutes=_env_int("XIANYU_KEEPALIVE_INTERVAL_MINUTES", _coerce_int(keepalive_cfg.get("interval_minutes"), DEFAULT_KEEPALIVE_INTERVAL_MINUTES)),
+        enabled=_env_bool(
+            "XIANYU_KEEPALIVE_ENABLED",
+            _coerce_bool(keepalive_cfg.get("enabled"), DEFAULT_KEEPALIVE_ENABLED),
+        ),
+        interval_minutes=_env_int(
+            "XIANYU_KEEPALIVE_INTERVAL_MINUTES",
+            _coerce_int(
+                keepalive_cfg.get("interval_minutes"),
+                DEFAULT_KEEPALIVE_INTERVAL_MINUTES,
+            ),
+        ),
     )
 
     search_settings = SearchSettings(
         max_stale_pages=_env_int(
             "XIANYU_SEARCH_MAX_STALE_PAGES",
-            _coerce_int(search_cfg.get("max_stale_pages"), DEFAULT_SEARCH_MAX_STALE_PAGES),
+            _coerce_int(
+                search_cfg.get("max_stale_pages"), DEFAULT_SEARCH_MAX_STALE_PAGES
+            ),
         ),
     )
 
