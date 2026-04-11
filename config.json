@@ -1,24 +1,212 @@
 {
-  "chrome": {
-    "path": {
-      "macos": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-      "linux": "/usr/bin/google-chrome",
-      "windows": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://www.xmapi.cc/v1",
+        "apiKey": "sk-cc9ef92f8ea6cc8428ae3a40a0043da3a9d4b7753068b23e9b64ca99e8349e9f"
+      },
+      "models": {
+        "gpt-5-codex": {
+          "name": "GPT-5 Codex",
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "options": {
+            "store": false
+          },
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {}
+          }
+        },
+        "gpt-5.1-codex": {
+          "name": "GPT-5.1 Codex",
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "options": {
+            "store": false
+          },
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {}
+          }
+        },
+        "gpt-5.1-codex-max": {
+          "name": "GPT-5.1 Codex Max",
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "options": {
+            "store": false
+          },
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {}
+          }
+        },
+        "gpt-5.1-codex-mini": {
+          "name": "GPT-5.1 Codex Mini",
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "options": {
+            "store": false
+          },
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {}
+          }
+        },
+        "gpt-5.2": {
+          "name": "GPT-5.2",
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "options": {
+            "store": false
+          },
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {},
+            "xhigh": {}
+          }
+        },
+        "gpt-5.4": {
+          "name": "GPT-5.4",
+          "limit": {
+            "context": 1050000,
+            "output": 128000
+          },
+          "options": {
+            "store": false
+          },
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {},
+            "xhigh": {}
+          }
+        },
+        "gpt-5.4-mini": {
+          "name": "GPT-5.4 Mini",
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "options": {
+            "store": false
+          },
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {},
+            "xhigh": {}
+          }
+        },
+        "gpt-5.4-nano": {
+          "name": "GPT-5.4 Nano",
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "options": {
+            "store": false
+          },
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {},
+            "xhigh": {}
+          }
+        },
+        "gpt-5.3-codex-spark": {
+          "name": "GPT-5.3 Codex Spark",
+          "limit": {
+            "context": 128000,
+            "output": 32000
+          },
+          "options": {
+            "store": false
+          },
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {},
+            "xhigh": {}
+          }
+        },
+        "gpt-5.3-codex": {
+          "name": "GPT-5.3 Codex",
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "options": {
+            "store": false
+          },
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {},
+            "xhigh": {}
+          }
+        },
+        "gpt-5.2-codex": {
+          "name": "GPT-5.2 Codex",
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "options": {
+            "store": false
+          },
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {},
+            "xhigh": {}
+          }
+        },
+        "codex-mini-latest": {
+          "name": "Codex Mini",
+          "limit": {
+            "context": 200000,
+            "output": 100000
+          },
+          "options": {
+            "store": false
+          },
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {}
+          }
+        }
+      }
+    }
+  },
+  "agent": {
+    "build": {
+      "options": {
+        "store": false
+      }
     },
-    "port": 9222,
-    "user_data_dir": "~/.claude/xianyu-chrome-profile"
+    "plan": {
+      "options": {
+        "store": false
+      }
+    }
   },
-  "storage": {
-    "data_root": "~/.claude/xianyu-data/users",
-    "user_id": "default",
-    "token_file": "",
-    "chrome_user_data_dir": ""
-  },
-  "keepalive": {
-    "enabled": true,
-    "interval_minutes": 10
-  },
-  "search": {
-    "max_stale_pages": 3
-  }
+  "$schema": "https://opencode.ai/config.json"
 }

@@ -24,6 +24,11 @@ try:
 except ImportError:
     from browser import AsyncChromeManager
 
+try:
+    from .page_coordinator import PageCoordinator
+except ImportError:
+    from page_coordinator import PageCoordinator
+
 
 # ==================== 二维码显示相关 ====================
 
@@ -185,7 +190,7 @@ class SessionManager:
         self.chrome_manager = chrome_manager or AsyncChromeManager(
             settings=self.settings
         )
-        self.page_coordinator = page_coordinator
+        self.page_coordinator = page_coordinator or PageCoordinator(self.chrome_manager)
         self.token: Optional[str] = None
         self.full_cookie: Optional[str] = None
         self.token_file = self.settings.storage.token_file

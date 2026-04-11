@@ -3,6 +3,7 @@ test_keepalive.py - Verify browser page roles and session cookie wiring.
 """
 
 import importlib
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -50,6 +51,35 @@ async def test_ensure_running_does_not_reconnect_when_connected(tmp_path):
 
     assert await manager.ensure_running()
     assert not connect_called
+
+
+@pytest.mark.asyncio
+async def test_ensure_running_serializes_concurrent_connects(tmp_path):
+    manager = AsyncChromeManager(auto_start=False, settings=make_settings(tmp_path))
+
+    connect_calls = 0
+
+    async def connect_stub():
+        nonlocal connect_calls
+        connect_calls += 1
+        await asyncio.sleep(0)
+        manager.browser = object()
+        manager.context = FakeContext()
+        work_page = manager.context.pages[0]
+        manager._work_page = work_page
+        manager.page = work_page
+        return True
+
+    manager.connect = connect_stub
+
+    first, second = await asyncio.gather(
+        manager.ensure_running(),
+        manager.ensure_running(),
+    )
+
+    assert first is True
+    assert second is True
+    assert connect_calls == 1
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.session import SessionManager
+from src import session as session_mod
 from src.settings import AppSettings, KeepaliveSettings, SearchSettings, StorageSettings
 
 
@@ -149,3 +150,58 @@ async def test_successful_cookie_check_closes_lingering_session_page(
     assert await session.check_cookie_valid() is True
     assert coordinator.task_pages[0].closed is True
     assert coordinator.close_session_page_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_session_manager_creates_default_page_coordinator(tmp_path, monkeypatch):
+    coordinator = FakeCoordinator()
+
+    class FakeBrowser:
+        async def ensure_running(self):
+            return True
+
+    monkeypatch.setattr(
+        session_mod, "PageCoordinator", lambda browser: coordinator, raising=False
+    )
+
+    session = SessionManager(FakeBrowser(), settings=make_settings(tmp_path))
+
+    assert session.page_coordinator is coordinator
+
+
+@pytest.mark.asyncio
+async def test_refresh_token_helper_uses_default_page_coordinator(
+    tmp_path, monkeypatch
+):
+    coordinator = FakeCoordinator()
+
+    class FakeBrowser:
+        def __init__(self):
+            self.settings = make_settings(tmp_path)
+
+        async def ensure_running(self):
+            return True
+
+        async def navigate(self, *_args, **_kwargs):
+            return True
+
+        async def get_xianyu_token(self):
+            return "token123"
+
+        async def get_cookie(self, *_args, **_kwargs):
+            return "token123_999"
+
+        async def get_full_cookie_string(self):
+            return "a=1; b=2"
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        session_mod, "PageCoordinator", lambda browser: coordinator, raising=False
+    )
+
+    result = await session_mod.refresh_token(FakeBrowser())
+
+    assert result == {"token": "token123", "full_cookie": "token123_999"}
+    assert coordinator.task_pages[0].closed is True

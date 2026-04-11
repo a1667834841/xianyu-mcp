@@ -5,8 +5,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+ENV TZ=Asia/Shanghai
+
 # 安装系统依赖（Playwright 需要的库 + curl 用于健康检查）
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     libnss3 \
     libnspr4 \
     libatk1.0-0 \
@@ -22,7 +24,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrandr2 \
     libgbm1 \
     libasound2 \
+    tzdata \
     curl \
+    && ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime \
+    && printf '%s\n' "${TZ}" > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装 Python 依赖
