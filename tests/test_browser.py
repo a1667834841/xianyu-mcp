@@ -310,3 +310,113 @@ class TestBrowser:
         ws_url = await manager._get_websocket_url()
 
         assert ws_url == "ws://localhost:9222/devtools/browser/test-id"
+
+
+class OverviewFakePage:
+    def __init__(self, title_text: str, url: str, *, fail_title: bool = False):
+        self._title_text = title_text
+        self.url = url
+        self._fail_title = fail_title
+
+    async def title(self):
+        if self._fail_title:
+            raise RuntimeError("title failed")
+        return self._title_text
+
+
+class OverviewFakeContext:
+    def __init__(self, pages):
+        self.pages = pages
+
+
+class OverviewFakeBrowserRoot:
+    def __init__(self, contexts):
+        self.contexts = contexts
+
+
+@pytest.mark.asyncio
+async def test_get_browser_overview_returns_all_contexts_and_pages(tmp_path):
+    manager = AsyncChromeManager(user_data_dir=tmp_path, auto_start=False)
+
+    async def fake_ensure_running():
+        return True
+
+    manager.ensure_running = fake_ensure_running
+    manager.browser = OverviewFakeBrowserRoot(
+        [
+            OverviewFakeContext(
+                [
+                    OverviewFakePage("闲鱼", "https://www.goofish.com/"),
+                    OverviewFakePage("发布", "https://www.goofish.com/publish"),
+                ]
+            ),
+            OverviewFakeContext(
+                [
+                    OverviewFakePage("消息", "https://www.goofish.com/im"),
+                ]
+            ),
+        ]
+    )
+
+    overview = await manager.get_browser_overview()
+
+    assert overview == {
+        "browser_context_count": 2,
+        "contexts": [
+            {
+                "page_count": 2,
+                "pages": [
+                    {"title": "闲鱼", "url": "https://www.goofish.com/"},
+                    {"title": "发布", "url": "https://www.goofish.com/publish"},
+                ],
+            },
+            {
+                "page_count": 1,
+                "pages": [
+                    {"title": "消息", "url": "https://www.goofish.com/im"},
+                ],
+            },
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_browser_overview_falls_back_when_page_title_fails(tmp_path):
+    manager = AsyncChromeManager(user_data_dir=tmp_path, auto_start=False)
+
+    async def fake_ensure_running():
+        return True
+
+    manager.ensure_running = fake_ensure_running
+    manager.browser = OverviewFakeBrowserRoot(
+        [
+            OverviewFakeContext(
+                [
+                    OverviewFakePage(
+                        "ignored",
+                        "https://www.goofish.com/failing-title",
+                        fail_title=True,
+                    )
+                ]
+            )
+        ]
+    )
+
+    overview = await manager.get_browser_overview()
+
+    assert overview["contexts"][0]["pages"] == [
+        {"title": "", "url": "https://www.goofish.com/failing-title"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_browser_overview_raises_when_browser_not_ready(tmp_path):
+    manager = AsyncChromeManager(user_data_dir=tmp_path, auto_start=False)
+
+    async def fake_ensure_running():
+        return False
+
+    manager.ensure_running = fake_ensure_running
+
+    with pytest.raises(RuntimeError, match="浏览器未连接，无法获取概览"):
+        await manager.get_browser_overview()

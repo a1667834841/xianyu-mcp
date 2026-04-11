@@ -211,6 +211,7 @@ class AsyncChromeManager:
         self._search_page_lock = asyncio.Lock()
         self._session_page_lock = asyncio.Lock()
         self._publish_page_lock = asyncio.Lock()
+        self._connect_lock = asyncio.Lock()
         self.page: Optional[Page] = None
 
         # 创建用户数据目录
@@ -386,18 +387,23 @@ class AsyncChromeManager:
         if self._has_active_connection():
             return True
 
-        # 先尝试连接
-        if await self.connect():
-            return True
+        async with self._connect_lock:
+            # 其他协程可能已经在等待期间完成了连接。
+            if self._has_active_connection():
+                return True
 
-        # 如果是本地且允许自动启动，则启动 Chrome
-        if self.auto_start and self.host == "localhost":
-            if self.start_chrome():
-                await asyncio.sleep(2)  # 等待 Chrome 完全启动
-                return await self.connect()
+            # 先尝试连接
+            if await self.connect():
+                return True
 
-        print(f"[Browser] 无法连接到 {self.host}:{self.port}，请确保 Chrome 已启动")
-        return False
+            # 如果是本地且允许自动启动，则启动 Chrome
+            if self.auto_start and self.host == "localhost":
+                if self.start_chrome():
+                    await asyncio.sleep(2)  # 等待 Chrome 完全启动
+                    return await self.connect()
+
+            print(f"[Browser] 无法连接到 {self.host}:{self.port}，请确保 Chrome 已启动")
+            return False
 
     async def _ensure_page(self) -> bool:
         """
@@ -523,6 +529,45 @@ class AsyncChromeManager:
 
             self._publish_page = await self.context.new_page()
         return self._publish_page
+
+    async def get_browser_overview(self) -> Dict:
+        """返回当前浏览器 context 和页面概览。"""
+        if not await self.ensure_running():
+            raise RuntimeError("浏览器未连接，无法获取概览")
+
+        if not self.browser:
+            raise RuntimeError("浏览器未连接，无法获取概览")
+
+        contexts = getattr(self.browser, "contexts", None)
+        if contexts is None:
+            raise RuntimeError("浏览器上下文不可用，无法获取概览")
+
+        overview = {"browser_context_count": len(contexts), "contexts": []}
+
+        for context in contexts:
+            pages_payload = []
+            for page in getattr(context, "pages", []):
+                title = ""
+                try:
+                    title = await page.title()
+                except Exception:
+                    title = ""
+
+                pages_payload.append(
+                    {
+                        "title": title,
+                        "url": getattr(page, "url", "") or "",
+                    }
+                )
+
+            overview["contexts"].append(
+                {
+                    "page_count": len(pages_payload),
+                    "pages": pages_payload,
+                }
+            )
+
+        return overview
 
     async def navigate(
         self, url: str, wait_until: str = "networkidle", page=None
