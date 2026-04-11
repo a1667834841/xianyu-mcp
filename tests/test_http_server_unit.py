@@ -402,3 +402,78 @@ async def test_xianyu_browser_overview_returns_http_failure_payload(monkeypatch)
         "success": False,
         "message": "浏览器未连接，无法获取概览",
     }
+
+
+@pytest.mark.asyncio
+async def test_stdio_list_tools_includes_browser_overview(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.server as stdio_server
+
+    tools = await stdio_server.list_tools()
+    tool_names = [tool.kwargs["name"] for tool in tools]
+
+    assert "xianyu_browser_overview" in tool_names
+
+
+@pytest.mark.asyncio
+async def test_stdio_call_tool_returns_browser_overview_payload(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.server as stdio_server
+
+    class FakeApp:
+        async def browser_overview(self):
+            return {
+                "browser_context_count": 1,
+                "contexts": [
+                    {
+                        "page_count": 1,
+                        "pages": [
+                            {
+                                "title": "闲鱼",
+                                "url": "https://www.goofish.com/",
+                            }
+                        ],
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(stdio_server, "get_app", lambda: FakeApp())
+
+    result = await stdio_server.call_tool("xianyu_browser_overview", {})
+    payload = json.loads(result.content[0].text)
+
+    assert payload == {
+        "success": True,
+        "browser_context_count": 1,
+        "contexts": [
+            {
+                "page_count": 1,
+                "pages": [
+                    {
+                        "title": "闲鱼",
+                        "url": "https://www.goofish.com/",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_stdio_call_tool_returns_browser_overview_failure_payload(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.server as stdio_server
+
+    class FakeApp:
+        async def browser_overview(self):
+            raise RuntimeError("浏览器未连接，无法获取概览")
+
+    monkeypatch.setattr(stdio_server, "get_app", lambda: FakeApp())
+
+    result = await stdio_server.call_tool("xianyu_browser_overview", {})
+    payload = json.loads(result.content[0].text)
+
+    assert payload == {
+        "success": False,
+        "message": "浏览器未连接，无法获取概览",
+    }

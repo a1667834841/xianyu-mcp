@@ -135,6 +135,11 @@ async def list_tools() -> list[types.Tool]:
             description="显示登录二维码。访问闲鱼首页，如果未登录则显示二维码；如果已登录则直接返回。用户扫码后浏览器会自动跳转完成登录。",
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
+        types.Tool(
+            name="xianyu_browser_overview",
+            description="获取当前浏览器 context 数量，以及各 context 下页面标题和 URL。",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
     ]
 
 
@@ -160,6 +165,9 @@ async def call_tool(name: str, arguments: dict) -> types.CallToolResult:
 
         elif name == "xianyu_show_qr":
             return await handle_show_qr(arguments)
+
+        elif name == "xianyu_browser_overview":
+            return await handle_browser_overview(arguments)
 
         else:
             return types.CallToolResult(
@@ -348,6 +356,25 @@ async def handle_show_qr(arguments: dict) -> types.CallToolResult:
     return types.CallToolResult(
         content=[
             types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))
+        ]
+    )
+
+
+async def handle_browser_overview(arguments: dict) -> types.CallToolResult:
+    """处理浏览器概览查询。"""
+    app = get_app()
+
+    try:
+        overview = await app.browser_overview()
+        response = {"success": True, **overview}
+    except RuntimeError as exc:
+        response = {"success": False, "message": str(exc)}
+
+    return types.CallToolResult(
+        content=[
+            types.TextContent(
+                type="text", text=json.dumps(response, ensure_ascii=False)
+            )
         ]
     )
 
