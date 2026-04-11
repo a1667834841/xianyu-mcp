@@ -244,6 +244,10 @@ class XianyuApp:
             is_valid = await self.session.check_cookie_valid()
             return self.session.get_cookie_status(is_valid)
 
+    async def browser_overview(self) -> Dict[str, Any]:
+        """返回当前浏览器 context 和页面概览。"""
+        return await self.browser.get_browser_overview()
+
     # ==================== 搜索功能 ====================
 
     async def search(self, keyword: str, **options) -> List[SearchItem]:
@@ -523,7 +527,11 @@ class _ItemCopierImpl:
         await self.chrome_manager.navigate(
             "https://www.goofish.com/publish", page=self.page
         )
-        await asyncio.sleep(2)
+
+        publish_ready, publish_error = await self._wait_for_publish_ready()
+        if not publish_ready:
+            result["error"] = publish_error or "发布页未加载完成"
+            return result
 
         print("[ItemCopier] 步骤 2: 上传主图...")
         if not item_data.image_urls:
@@ -595,6 +603,51 @@ class _ItemCopierImpl:
         print("[ItemCopier] 表单填充完成")
 
         return result
+
+    async def _wait_for_publish_ready(
+        self, timeout_seconds: float = 10.0, poll_interval: float = 0.25
+    ) -> tuple[bool, Optional[str]]:
+        """等待发布页渲染上传控件，或识别明确的阻塞态。"""
+        page = self.page
+        if not page:
+            return False, "发布页不可用"
+
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                if await page.locator('input[type="file"]').count() > 0:
+                    return True, None
+
+                if await self._is_publish_login_blocked():
+                    return False, "发布页需要重新登录"
+            except Exception:
+                pass
+
+            await asyncio.sleep(poll_interval)
+
+        return False, "发布页未加载出图片上传控件"
+
+    async def _is_publish_login_blocked(self) -> bool:
+        """识别发布页是否被登录拦截。"""
+        page = self.page
+        if not page:
+            return False
+
+        login_indicators = [
+            "text=立即登录",
+            "text=登录后可以更懂你",
+            "text=短信登录",
+            "text=手机扫码安全登录",
+        ]
+
+        for selector in login_indicators:
+            try:
+                if await page.locator(selector).first.is_visible(timeout=200):
+                    return True
+            except Exception:
+                continue
+
+        return False
 
     async def _upload_image(self, image_url: str, is_main: bool = True) -> bool:
         """上传图片"""

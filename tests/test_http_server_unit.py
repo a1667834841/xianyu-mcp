@@ -340,3 +340,65 @@ async def test_xianyu_check_session_returns_null_when_last_updated_missing(monke
 
     assert payload["valid"] is False
     assert payload["last_updated_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_xianyu_browser_overview_returns_http_payload(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    class FakeApp:
+        async def browser_overview(self):
+            return {
+                "browser_context_count": 2,
+                "contexts": [
+                    {
+                        "page_count": 1,
+                        "pages": [
+                            {
+                                "title": "闲鱼",
+                                "url": "https://www.goofish.com/",
+                            }
+                        ],
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(http_server, "get_app", lambda: FakeApp())
+
+    payload = json.loads(await http_server.xianyu_browser_overview())
+
+    assert payload == {
+        "success": True,
+        "browser_context_count": 2,
+        "contexts": [
+            {
+                "page_count": 1,
+                "pages": [
+                    {
+                        "title": "闲鱼",
+                        "url": "https://www.goofish.com/",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_xianyu_browser_overview_returns_http_failure_payload(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    class FakeApp:
+        async def browser_overview(self):
+            raise RuntimeError("浏览器未连接，无法获取概览")
+
+    monkeypatch.setattr(http_server, "get_app", lambda: FakeApp())
+
+    payload = json.loads(await http_server.xianyu_browser_overview())
+
+    assert payload == {
+        "success": False,
+        "message": "浏览器未连接，无法获取概览",
+    }

@@ -216,6 +216,22 @@ async def xianyu_check_session() -> str:
 
 
 @mcp.tool()
+async def xianyu_browser_overview() -> str:
+    """
+    获取当前浏览器 context 数量，以及各 context 下页面标题和 URL。
+    """
+    app = get_app()
+
+    try:
+        overview = await app.browser_overview()
+        response = {"success": True, **overview}
+    except RuntimeError as exc:
+        response = {"success": False, "message": str(exc)}
+
+    return json.dumps(response, ensure_ascii=False)
+
+
+@mcp.tool()
 async def xianyu_show_qr() -> str:
     """
     显示登录二维码。访问闲鱼首页，如果未登录则显示二维码；如果已登录则直接返回。用户扫码后浏览器会自动跳转完成登录。
