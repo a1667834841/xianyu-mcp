@@ -6,6 +6,7 @@ mcp_server/http_server.py - 闲鱼 MCP Server HTTP/SSE 入口
 import os
 import sys
 import json
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 
 from mcp.server.fastmcp import FastMCP
@@ -230,10 +231,16 @@ def build_app():
         Route("/rest/check_session", rest_check_session, methods=["GET", "POST"]),
         Route("/rest/search", rest_search, methods=["POST"]),
     ]
+
+    @asynccontextmanager
+    async def lifespan(app):
+        await initialize_manager()
+        yield
+
     return Starlette(
         routes=rest_routes + [Mount("/", app=mcp.sse_app())],
         middleware=middleware,
-        on_startup=[initialize_manager],
+        lifespan=lifespan,
     )
 
 
