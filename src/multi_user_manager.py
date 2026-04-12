@@ -37,6 +37,7 @@ class MultiUserManager:
             "cookie_valid": False,
             "last_error": None,
             "busy": False,
+            "xianyu_nick": None,
         }
         return entry
 
@@ -146,6 +147,7 @@ class MultiUserManager:
                 "cookie_valid": False,
                 "last_error": None,
                 "busy": False,
+                "xianyu_nick": None,
             },
         )
 
@@ -188,6 +190,7 @@ class MultiUserManager:
         return {
             "user_id": entry.user_id,
             "display_name": entry.display_name,
+            "xianyu_nick": state.get("xianyu_nick"),
             "enabled": entry.enabled,
             "status": state.get("status", entry.status),
             "slot_id": entry.slot_id,
@@ -326,6 +329,9 @@ class MultiUserManager:
                 self._runtime_state[entry.user_id]["last_cookie_updated_at"] = (
                     session_status.get("last_updated_at")
                 )
+                self._runtime_state[entry.user_id]["xianyu_nick"] = session_status.get(
+                    "display_name"
+                )
                 self._runtime_state[entry.user_id]["cookie_present"] = True
                 status = "ready" if session_status["valid"] else "pending_login"
                 self._runtime_state[entry.user_id]["status"] = status
@@ -367,6 +373,7 @@ class MultiUserManager:
         self._runtime_state[user_id]["last_cookie_updated_at"] = result.get(
             "last_updated_at"
         )
+        self._runtime_state[user_id]["xianyu_nick"] = result.get("display_name")
         status = "ready" if result["valid"] else "pending_login"
         self._runtime_state[user_id]["status"] = status
         entry = self._entry_by_user_id(user_id)
@@ -403,6 +410,9 @@ class MultiUserManager:
                 self._runtime_state[entry.user_id]["cookie_present"] = True
                 self._runtime_state[entry.user_id]["last_cookie_updated_at"] = (
                     session_status.get("last_updated_at")
+                )
+                self._runtime_state[entry.user_id]["xianyu_nick"] = session_status.get(
+                    "display_name"
                 )
                 self._runtime_state[entry.user_id]["status"] = status
                 updated_entry = replace(entry, status=status)

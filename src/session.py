@@ -195,6 +195,7 @@ class SessionManager:
         self.full_cookie: Optional[str] = None
         self.token_file = self.settings.storage.token_file
         self.token_file.parent.mkdir(parents=True, exist_ok=True)
+        self._last_display_name: Optional[str] = None
 
     async def __aenter__(self):
         """异步上下文管理器入口"""
@@ -383,6 +384,7 @@ class SessionManager:
                         if display_name:
                             print(f"[Session] Cookie 有效，用户：{display_name}")
                             await self.page_coordinator.close_session_page()
+                            self._last_display_name = display_name
                             return True
                         else:
                             # 返回 SUCCESS 但没有用户信息，可能是异常状态
@@ -428,6 +430,7 @@ class SessionManager:
         return {
             "valid": is_valid,
             "last_updated_at": last_updated_at,
+            "display_name": self._last_display_name,
         }
 
     async def get_token(self) -> Optional[str]:

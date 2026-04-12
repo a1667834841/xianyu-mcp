@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "xianyu": {
-      "command": "/opt/dockercompose/xianyu/run-mcp-native.sh",
-      "args": [],
+      "command": "docker",
+      "args": ["exec", "-i", "xianyu-mcp", "python", "-m", "mcp_server.server"],
       "env": {
         "CDP_HOST": "localhost",
         "CDP_PORT": "9222"
