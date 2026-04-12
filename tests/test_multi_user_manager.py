@@ -189,3 +189,78 @@ async def test_publish_happy_path(tmp_path):
 
     assert result["success"] is True
     assert result["user_id"] == entry.user_id
+
+
+@pytest.mark.asyncio
+async def test_resolve_debug_user_auto_picks_first_ready_user(tmp_path):
+    manager = make_manager(tmp_path)
+    first = manager.create_user()
+    second = manager.create_user()
+    manager.registry.update_user(replace(first, status="ready"))
+    manager.registry.update_user(replace(second, status="pending_login"))
+
+    entry, selected_by = manager.resolve_debug_user(None)
+
+    assert entry.user_id == first.user_id
+    assert selected_by == "auto"
+
+
+@pytest.mark.asyncio
+async def test_resolve_login_user_auto_picks_first_not_ready_user(tmp_path):
+    manager = make_manager(tmp_path)
+    first = manager.create_user()
+    second = manager.create_user()
+    manager._runtime_state[first.user_id] = {
+        "status": "ready",
+        "cookie_valid": True,
+        "enabled": True,
+    }
+    manager._runtime_state[second.user_id] = {
+        "status": "pending_login",
+        "cookie_valid": False,
+        "enabled": True,
+    }
+
+    entry, selected_by = manager.resolve_login_user(None)
+
+    assert entry.user_id == second.user_id
+    assert selected_by == "auto"
+
+
+@pytest.mark.asyncio
+async def test_debug_login_returns_selected_user_metadata(tmp_path):
+    manager = make_manager(tmp_path)
+    entry = manager.create_user()
+    runtime = await manager._get_or_create_runtime(entry.user_id)
+
+    async def fake_login(timeout=30):
+        return {
+            "success": True,
+            "logged_in": False,
+            "qr_code": {
+                "url": "https://passport.goofish.com/qrcodeCheck.htm?lgToken=test"
+            },
+            "message": "请扫码登录",
+        }
+
+    runtime.app.login = fake_login
+
+    result = await manager.debug_login(user_id=entry.user_id)
+
+    assert result["user_id"] == entry.user_id
+    assert result["slot_id"] == entry.slot_id
+    assert result["selected_by"] == "explicit"
+    assert result["qr_code"]["url"].startswith("https://passport.goofish.com/")
+
+
+def test_resolve_login_user_raises_when_all_users_are_ready(tmp_path):
+    manager = make_manager(tmp_path)
+    entry = manager.create_user()
+    manager._runtime_state[entry.user_id] = {
+        "status": "ready",
+        "cookie_valid": True,
+        "enabled": True,
+    }
+
+    with pytest.raises(RuntimeError, match="no_available_user"):
+        manager.resolve_login_user(None)

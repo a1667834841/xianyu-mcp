@@ -56,6 +56,67 @@ class MultiUserManager:
     def _entry_by_user_id(self, user_id: str) -> UserRegistryEntry:
         return self.registry.get_user(user_id)
 
+    def resolve_debug_user(self, user_id: str | None) -> tuple[UserRegistryEntry, str]:
+        if user_id is not None:
+            return self._entry_by_user_id(user_id), "explicit"
+        for entry in self.registry.list_users():
+            if entry.enabled and entry.status == "ready":
+                return entry, "auto"
+        raise RuntimeError("no_available_user")
+
+    def resolve_login_user(self, user_id: str | None) -> tuple[UserRegistryEntry, str]:
+        if user_id is not None:
+            return self._entry_by_user_id(user_id), "explicit"
+        for entry in self.registry.list_users():
+            state = self._runtime_state.get(entry.user_id, {})
+            status = state.get("status", entry.status)
+            cookie_valid = state.get("cookie_valid", False)
+            if entry.enabled and not (status == "ready" and cookie_valid):
+                return entry, "auto"
+        raise RuntimeError("no_available_user")
+
+    async def debug_login(self, user_id: str | None = None) -> dict[str, Any]:
+        entry, selected_by = self.resolve_login_user(user_id)
+        result = await self.login(entry.user_id)
+        return {"slot_id": entry.slot_id, "selected_by": selected_by, **result}
+
+    async def debug_check_session(self, user_id: str | None = None) -> dict[str, Any]:
+        entry, selected_by = self.resolve_debug_user(user_id)
+        result = await self.check_session(entry.user_id)
+        return {"slot_id": entry.slot_id, "selected_by": selected_by, **result}
+
+    async def debug_search(
+        self, keyword: str, user_id: str | None = None, **options
+    ) -> dict[str, Any]:
+        entry, selected_by = self.resolve_debug_user(user_id)
+        result = await self.search(keyword=keyword, user_id=entry.user_id, **options)
+        result["selected_by"] = selected_by
+        return result
+
+    async def debug_browser_overview(
+        self, user_id: str | None = None
+    ) -> dict[str, Any]:
+        if user_id is not None:
+            runtime = await self._get_or_create_runtime(user_id)
+            overview = await runtime.app.browser_overview()
+            return {
+                "user_id": user_id,
+                "slot_id": runtime.entry.slot_id,
+                "selected_by": "explicit",
+                **overview,
+            }
+        users = []
+        for runtime in self._runtimes.values():
+            overview = await runtime.app.browser_overview()
+            users.append(
+                {
+                    "user_id": runtime.entry.user_id,
+                    "slot_id": runtime.entry.slot_id,
+                    **overview,
+                }
+            )
+        return {"users": users}
+
     def _is_keepalive_running(self, user_id: str) -> bool:
         runtime = self._runtimes.get(user_id)
         if runtime is not None and hasattr(runtime.app, "background_tasks_running"):
@@ -208,6 +269,13 @@ class MultiUserManager:
         await runtime.app.stop_background_tasks()
         self._runtime_state[user_id]["keepalive_running"] = False
 
+    async def ensure_keepalive(self, user_id: str) -> None:
+        runtime = await self._get_or_create_runtime(user_id)
+        runtime.app.start_background_tasks()
+        self._runtime_state[user_id]["keepalive_running"] = self._is_keepalive_running(
+            user_id
+        )
+
     async def check_all_sessions(self) -> list[dict[str, Any]]:
         results = []
         for entry in self.registry.list_users():
@@ -245,16 +313,9 @@ class MultiUserManager:
             )
             self._runtime_state[user_id]["status"] = status
             entry = self._entry_by_user_id(user_id)
-            updated_entry = replace(entry, status=status)
-            self.registry.update_user(updated_entry)
-        return {"user_id": user_id, **result}
-
-    async def show_qr(self, user_id: str) -> dict[str, Any]:
-        runtime = await self._get_or_create_runtime(user_id)
-        try:
-            result = await runtime.app.show_qr_code()
-        except Exception as e:
-            raise RuntimeError(f"show_qr_failed: {e}") from e
+            self.registry.update_user(replace(entry, status=status))
+            if status == "ready":
+                await self.ensure_keepalive(user_id)
         return {"user_id": user_id, **result}
 
     async def check_session(self, user_id: str) -> dict[str, Any]:
@@ -265,11 +326,17 @@ class MultiUserManager:
             raise RuntimeError(f"check_session_failed: {e}") from e
         self._runtime_state[user_id]["cookie_valid"] = result["valid"]
         self._runtime_state[user_id]["cookie_present"] = True
+        self._runtime_state[user_id]["last_cookie_updated_at"] = result.get(
+            "last_updated_at"
+        )
         status = "ready" if result["valid"] else "pending_login"
         self._runtime_state[user_id]["status"] = status
         entry = self._entry_by_user_id(user_id)
-        updated_entry = replace(entry, status=status)
-        self.registry.update_user(updated_entry)
+        self.registry.update_user(replace(entry, status=status))
+        if result["valid"]:
+            await self.ensure_keepalive(user_id)
+        else:
+            await self.stop_keepalive(user_id)
         return {"user_id": user_id, **result}
 
     async def refresh_token(self, user_id: str) -> dict[str, Any]:
@@ -278,6 +345,13 @@ class MultiUserManager:
             result = await runtime.app.refresh_token()
         except Exception as e:
             raise RuntimeError(f"refresh_token_failed: {e}") from e
+        if result:
+            self._runtime_state[user_id]["cookie_present"] = True
+            self._runtime_state[user_id]["cookie_valid"] = True
+            self._runtime_state[user_id]["status"] = "ready"
+            entry = self._entry_by_user_id(user_id)
+            self.registry.update_user(replace(entry, status="ready"))
+            await self.ensure_keepalive(user_id)
         return {"user_id": user_id, "success": bool(result), **(result or {})}
 
     async def ensure_initialized(self) -> None:
