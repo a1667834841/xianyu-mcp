@@ -116,81 +116,6 @@ def _install_fake_mcp(monkeypatch):
         monkeypatch.setitem(sys.modules, name, module)
 
 
-@pytest.mark.asyncio
-async def test_stdio_server_get_app_starts_background_tasks_once(monkeypatch):
-    _install_fake_mcp(monkeypatch)
-    import mcp_server.server as stdio_server
-    import src.browser as browser_mod
-
-    stdio_server._app = None
-    start_calls = 0
-
-    class FakeBrowser:
-        def __init__(self, host: str, port: int, auto_start: bool):
-            self.host = host
-            self.port = port
-            self.auto_start = auto_start
-
-    class FakeApp:
-        def __init__(self, browser):
-            self.browser = browser
-
-        def start_background_tasks(self):
-            nonlocal start_calls
-            start_calls += 1
-
-        async def stop_background_tasks(self):
-            return None
-
-    monkeypatch.setattr(browser_mod, "AsyncChromeManager", FakeBrowser)
-    monkeypatch.setattr(stdio_server, "XianyuApp", FakeApp)
-
-    app1 = stdio_server.get_app()
-    app2 = stdio_server.get_app()
-
-    assert app1 is app2
-    assert start_calls == 1
-
-
-@pytest.mark.asyncio
-async def test_stdio_run_server_stops_background_tasks_on_shutdown(monkeypatch):
-    _install_fake_mcp(monkeypatch)
-    import mcp_server.server as stdio_server
-
-    stop_calls = 0
-
-    class FakeApp:
-        def start_background_tasks(self):
-            return None
-
-        async def stop_background_tasks(self):
-            nonlocal stop_calls
-            stop_calls += 1
-
-    fake_app = FakeApp()
-
-    class DummyStdio:
-        async def __aenter__(self):
-            return (object(), object())
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    async def run_stub(*_args, **_kwargs):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(stdio_server, "get_app", lambda: fake_app)
-    monkeypatch.setattr(
-        stdio_server.mcp.server.stdio, "stdio_server", lambda: DummyStdio()
-    )
-    monkeypatch.setattr(stdio_server.server, "run", run_stub)
-
-    with pytest.raises(RuntimeError):
-        await stdio_server.run_server()
-
-    assert stop_calls == 1
-
-
 def _make_search_item(item_id: str) -> SearchItem:
     return SearchItem(
         item_id=item_id,
@@ -374,64 +299,107 @@ async def test_stdio_list_tools_includes_browser_overview(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stdio_call_tool_returns_browser_overview_payload(monkeypatch):
+async def test_stdio_list_tools_drops_show_qr_and_adds_multi_user_tools(monkeypatch):
     _install_fake_mcp(monkeypatch)
     import mcp_server.server as stdio_server
 
-    class FakeApp:
-        async def browser_overview(self):
-            return {
-                "browser_context_count": 1,
-                "contexts": [
-                    {
-                        "page_count": 1,
-                        "pages": [
-                            {
-                                "title": "闲鱼",
-                                "url": "https://www.goofish.com/",
-                            }
-                        ],
-                    }
-                ],
-            }
+    tools = await stdio_server.list_tools()
+    tool_names = [tool.name for tool in tools]
 
-    monkeypatch.setattr(stdio_server, "get_app", lambda: FakeApp())
-
-    result = await stdio_server.call_tool("xianyu_browser_overview", {})
-    payload = json.loads(result.content[0].text)
-
-    assert payload == {
-        "success": True,
-        "browser_context_count": 1,
-        "contexts": [
-            {
-                "page_count": 1,
-                "pages": [
-                    {
-                        "title": "闲鱼",
-                        "url": "https://www.goofish.com/",
-                    }
-                ],
-            }
-        ],
-    }
+    assert "xianyu_show_qr" not in tool_names
+    assert "xianyu_list_users" in tool_names
+    assert "xianyu_create_user" in tool_names
+    assert "xianyu_get_user_status" in tool_names
 
 
 @pytest.mark.asyncio
-async def test_stdio_call_tool_returns_browser_overview_failure_payload(monkeypatch):
+async def test_stdio_call_tool_routes_login_through_manager(monkeypatch):
     _install_fake_mcp(monkeypatch)
     import mcp_server.server as stdio_server
 
-    class FakeApp:
-        async def browser_overview(self):
-            raise RuntimeError("浏览器未连接，无法获取概览")
+    class FakeManager:
+        async def ensure_initialized(self):
+            return None
 
-    monkeypatch.setattr(stdio_server, "get_app", lambda: FakeApp())
+        async def debug_login(self, user_id=None):
+            return {
+                "success": True,
+                "user_id": user_id or "user-001",
+                "slot_id": "slot-1",
+                "selected_by": "auto" if user_id is None else "explicit",
+                "logged_in": False,
+                "message": "请扫码登录",
+            }
 
-    result = await stdio_server.call_tool("xianyu_browser_overview", {})
+    monkeypatch.setattr(stdio_server, "get_manager", lambda: FakeManager())
+
+    result = await stdio_server.call_tool("xianyu_login", {})
     payload = json.loads(result.content[0].text)
 
-    assert payload == {
-        "success": False,
-        "message": "浏览器未连接，无法获取概览",
-    }
+    assert payload["success"] is True
+    assert payload["selected_by"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_stdio_run_server_initializes_manager_without_get_app(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.server as stdio_server
+
+    calls = {"init": 0}
+
+    class FakeManager:
+        async def ensure_initialized(self):
+            calls["init"] += 1
+
+    class DummyStdio:
+        async def __aenter__(self):
+            return (object(), object())
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def run_stub(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(stdio_server, "get_manager", lambda: FakeManager())
+    monkeypatch.setattr(
+        stdio_server.mcp.server.stdio, "stdio_server", lambda: DummyStdio()
+    )
+    monkeypatch.setattr(stdio_server.server, "run", run_stub)
+
+    with pytest.raises(RuntimeError):
+        await stdio_server.run_server()
+
+    assert calls["init"] == 1
+
+
+@pytest.mark.asyncio
+async def test_stdio_call_tool_routes_create_user_through_manager(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.server as stdio_server
+
+    class FakeManager:
+        async def ensure_initialized(self):
+            return None
+
+        def create_user(self, display_name=None):
+            return type(
+                "Entry",
+                (),
+                {
+                    "user_id": "user-new",
+                    "slot_id": "slot-new",
+                    "cdp_port": 9222,
+                    "status": "pending_login",
+                },
+            )()
+
+    monkeypatch.setattr(stdio_server, "get_manager", lambda: FakeManager())
+
+    result = await stdio_server.call_tool(
+        "xianyu_create_user", {"display_name": "测试用户"}
+    )
+    payload = json.loads(result.content[0].text)
+
+    assert payload["success"] is True
+    assert payload["user_id"] == "user-new"
