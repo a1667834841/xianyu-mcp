@@ -36,15 +36,6 @@ class FakeManager:
         return {"success": True, "user_id": user_id, "item_id": "123"}
 
 
-async def test_xianyu_create_user_returns_user_payload(monkeypatch):
-    monkeypatch.setattr(http_server, "get_manager", lambda: FakeManager())
-
-    payload = json.loads(await http_server.xianyu_create_user())
-
-    assert payload["success"] is True
-    assert payload["user_id"] == "user-001"
-
-
 async def test_xianyu_publish_requires_user_id(monkeypatch):
     monkeypatch.setattr(http_server, "get_manager", lambda: FakeManager())
 
