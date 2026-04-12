@@ -12,60 +12,61 @@ Skills 是一个包含 `SKILL.md` 文件的目录，用于：
 ## 目录结构
 
 ```
-skills/
-└── xianyu-skill/
-    ├── SKILL.md          # 技能定义文件
-    └── README.md         # 安装说明
+.opencode/skills/                   # OpenCode 项目级 Skills
+├── xianyu-skill/
+│   └── SKILL.md                    # 闲鱼操作技能
+└── xianyu-hot-product-analysis/
+    └── SKILL.md                    # 热门商品分析技能
+
+.claude/skills/                     # Claude Code 兼容 Skills
+├── xianyu-skill/
+│   └── SKILL.md
+└── xianyu-hot-product-analysis/
+    └── SKILL.md
 ```
 
-## 安装方式
+## Skills 发现路径
 
-### 方式一：随项目克隆（推荐）
+OpenCode 自动扫描以下路径：
 
-克隆项目后 Skills 自动可用：
+| 客户端 | 项目级路径 | 全局路径 |
+|--------|-----------|---------|
+| OpenCode | `.opencode/skills/<name>/SKILL.md` | `~/.config/opencode/skills/<name>/SKILL.md` |
+| Claude Code | `.claude/skills/<name>/SKILL.md` | `~/.claude/skills/<name>/SKILL.md` |
+| Agents 兼容 | `.agents/skills/<name>/SKILL.md` | `~/.agents/skills/<name>/SKILL.md` |
 
-```bash
-git clone https://github.com/<your-username>/xianyu-mcp.git
-cd xianyu-mcp
+克隆项目后 Skills 自动可用，无需额外配置。
+
+## SKILL.md 格式要求
+
+每个 `SKILL.md` 必须以 YAML frontmatter 开头：
+
+```yaml
+---
+name: xianyu-skill
+description: Use when managing one or more Xianyu accounts via MCP
+---
 ```
 
-OpenCode 和 Claude Code 都会自动扫描并加载。
+| 字段 | 必填 | 规则 |
+|------|------|------|
+| `name` | ✅ | 1-64字符，仅小写字母数字，可用单个连字符分隔 |
+| `description` | ✅ | 1-1024字符，足够具体让 AI 能正确选择 |
 
-### 方式二：独立安装
-
-如需在其他项目中使用，可复制 Skills 目录：
-
-```bash
-# 复制到任意项目的 skills 目录
-cp -r skills/xianyu-skill /path/to/your-project/skills/
-
-# 或复制到 Claude Code 全局目录
-cp -r skills/xianyu-skill ~/.claude/skills/
-```
-
-## 客户端支持
-
-| 客户端 | Skills 路径 | 自动发现 |
-|--------|-------------|---------|
-| OpenCode | `skills/<name>/SKILL.md` | ✅ |
-| OpenCode | `.claude/skills/<name>/SKILL.md` | ✅ |
-| Claude Code | `.claude/skills/<name>/SKILL.md` | ✅ |
-| Claude Code | `~/.claude/skills/<name>/SKILL.md` | ✅ |
-
-本项目 Skills 同时存在于两个位置，确保两种客户端都能识别。
+名称正则：`^[a-z0-9]+(-[a-z0-9]+)*$`
 
 ## Skills 内容概要
 
-`SKILL.md` 定义了以下内容：
+### xianyu-skill
 
-### 核心规则
+核心规则：
 
 1. **先选用户，再做操作** - 大多数操作需明确 `user_id`
 2. **多用户场景不能省略 user_id** - 避免随机选择账号
 3. **搜索不能按曝光度排序** - 需要二次排序
 4. **发布成功≠上架** - 特殊类目可能保存为草稿
 
-### 工具速查
+工具速查：
 
 | 工具 | 用途 |
 |------|------|
@@ -76,22 +77,15 @@ cp -r skills/xianyu-skill ~/.claude/skills/
 | `xianyu_search` | 搜索商品 |
 | `xianyu_publish` | 复制发布商品 |
 
-### 推荐流程
+### xianyu-hot-product-analysis
 
-```
-查看用户 → 选择账号 → 检查登录态 → 执行操作
-```
+用于分析热门商品，识别用户痛点、关键词和曝光驱动因素。
 
 ## 验证安装
 
 ### OpenCode
 
-```bash
-# 在 OpenCode 中执行
-help skills
-```
-
-应看到 `xianyu-skill` 在列表中。
+OpenCode 会自动显示可用技能列表，通过 `skill` 工具按需加载。
 
 ### Claude Code
 
@@ -103,8 +97,28 @@ Claude Code 会在需要时自动调用 Skills。可通过自然语言验证：
 
 如果 AI 正确调用 `xianyu_list_users` 并遵循 Skills 规则，说明安装成功。
 
+## 独立安装
+
+如需在其他项目中使用，可复制 Skills 目录：
+
+```bash
+# 复制到 OpenCode 全局目录
+cp -r .opencode/skills/xianyu-skill ~/.config/opencode/skills/
+
+# 或复制到 Claude Code 全局目录
+cp -r .claude/skills/xianyu-skill ~/.claude/skills/
+```
+
+## 常见问题
+
+| 问题 | 解决方案 |
+|------|---------|
+| Skills 未加载 | 确认 SKILL.md 文件名大小写正确 |
+| frontmatter 无效 | 确保 name/description 字段存在且符合规则 |
+| 技能名称冲突 | 确保各技能名称在所有位置中唯一 |
+
 ## 相关文档
 
 - [OpenCode 安装指南](./opencode-setup.md)
 - [Claude Code 安装指南](./claude-code-setup.md)
-- [Skills 技能定义](../skills/xianyu-skill/SKILL.md)
+- [OpenCode Skills 官方文档](https://opencode.ai/docs/zh-cn/skills/)

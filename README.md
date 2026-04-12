@@ -13,7 +13,7 @@
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/<your-username>/xianyu-mcp.git
+git clone https://github.com/a1667834841/xianyu-mcp.git
 cd xianyu-mcp
 
 # 2. 配置环境变量
@@ -73,13 +73,13 @@ xianyu-mcp/
 │   ├── mcp-e2e-regression.md    # 端到端回归手册
 │   └── mcp-dev-cheatsheet.md    # MCP 调试手册
 │
-├── skills/                      # Skills 定义
-│   └── xianyu-skill/
-│       ├── SKILL.md             # 技能定义
-│       └── README.md            # 安装说明
+├── .opencode/skills/            # OpenCode Skills
+│   ├── xianyu-skill/SKILL.md
+│   └── xianyu-hot-product-analysis/SKILL.md
 │
-├── .claude/skills/              # Claude Code 兼容 Skills
-│   └── xianyu-skill/SKILL.md
+├── .claude/skills/              # Claude Code Skills
+│   ├── xianyu-skill/SKILL.md
+│   └── xianyu-hot-product-analysis/SKILL.md
 │
 ├── docker/                      # Docker 构建文件
 │   ├── Dockerfile               # MCP Server 镜像
@@ -125,7 +125,7 @@ xianyu-mcp/
 | Claude Code 接入 | [docs/claude-code-setup.md](docs/claude-code-setup.md) |
 | Skills 安装 | [docs/skills-setup.md](docs/skills-setup.md) |
 | Docker 部署详解 | [docker/README.md](docker/README.md) |
-| Skills 技能定义 | [skills/xianyu-skill/SKILL.md](skills/xianyu-skill/SKILL.md) |
+| Skills 技能定义 | [.opencode/skills/xianyu-skill/SKILL.md](.opencode/skills/xianyu-skill/SKILL.md) |
 | 端到端回归 | [docs/mcp-e2e-regression.md](docs/mcp-e2e-regression.md) |
 | MCP Dev CLI | [docs/mcp-dev-cheatsheet.md](docs/mcp-dev-cheatsheet.md) |
 

@@ -9,16 +9,9 @@
 
 ## 安装 MCP Server
 
-### 1. 创建/编辑 OpenCode 配置文件
+### 1. 配置 opencode.json
 
 在项目根目录创建或编辑 `opencode.json`：
-
-```bash
-# 如果不存在则创建
-touch opencode.json
-```
-
-添加以下内容：
 
 ```json
 {
@@ -41,51 +34,65 @@ touch opencode.json
 | `url` | `http://127.0.0.1:8080/sse` | MCP Server 的 SSE 端点 |
 | `enabled` | `true` | 启动时启用 |
 
-### 3. 验证配置
+### 3. 验证 MCP 连接
 
-重启 OpenCode 或在新会话中，OpenCode 会自动连接 MCP Server。
+```bash
+opencode mcp list
+```
+
+应看到 `xianyu` 服务器已启用。
 
 ## 安装 Skills
 
-项目已包含闲鱼 Skills 文件：
-
-```
-skills/xianyu-skill/SKILL.md
-.claude/skills/xianyu-skill/SKILL.md
-```
-
-OpenCode 会自动发现并加载 `skills/` 目录下的 Skills。
-
-### Skills 存放位置
-
-OpenCode 支持以下 Skills 存放路径（项目级）：
+OpenCode Skills 通过 `SKILL.md` 文件定义，自动从以下路径发现：
 
 | 路径 | 说明 |
 |------|------|
-| `skills/<name>/SKILL.md` | OpenCode 原生格式（推荐） |
-| `.claude/skills/<name>/SKILL.md` | Claude Code 兼容格式 |
+| `.opencode/skills/<name>/SKILL.md` | 项目级（推荐） |
+| `.claude/skills/<name>/SKILL.md` | Claude Code 兼容 |
+| `.agents/skills/<name>/SKILL.md` | Agents 兼容 |
 
-本项目 Skills 同时存在于两个位置，确保两种客户端都能识别。
+本项目已包含以下 Skills：
+
+```
+.opencode/skills/
+├── xianyu-skill/SKILL.md
+└── xianyu-hot-product-analysis/SKILL.md
+
+.claude/skills/
+├── xianyu-skill/SKILL.md
+└── xianyu-hot-product-analysis/SKILL.md
+```
+
+克隆项目后 Skills 自动可用，无需额外配置。
+
+### SKILL.md 格式
+
+每个 `SKILL.md` 必须以 YAML frontmatter 开头：
+
+```yaml
+---
+name: xianyu-skill
+description: Use when managing one or more Xianyu accounts via MCP
+---
+```
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `name` | ✅ | 技能名称，1-64字符，小写字母数字 |
+| `description` | ✅ | 技能描述，1-1024字符 |
 
 ## 验证安装
 
-### 检查 MCP 连接
+### 检查 MCP
 
-在 OpenCode 中输入：
-
+```bash
+opencode mcp list
 ```
-/mcp list
-```
-
-应该看到 `xianyu` 服务器已启用。
 
 ### 检查 Skills
 
-```
-help skills
-```
-
-应该看到 `xianyu-skill` 在可用技能列表中。
+Skills 通过 `skill` 工具按需加载。OpenCode 会自动显示可用技能列表。
 
 ## 使用示例
 
@@ -101,7 +108,7 @@ help skills
 
 ## MCP Dev CLI
 
-本地调试 MCP 方法时，可以直接调用仓库里的 `scripts/mcp-dev`：
+本地调试 MCP 时，可以直接调用 `scripts/mcp-dev`：
 
 ```bash
 ./scripts/mcp-dev call xianyu_list_users
@@ -110,20 +117,20 @@ help skills
 ./scripts/mcp-dev call xianyu_search --user-id user-001 --keyword 机械键盘 --rows 5
 ```
 
-- 默认请求地址为 `http://127.0.0.1:${MCP_HOST_PORT:-8080}/mcp`；若该 `/mcp` 地址返回 `404`，脚本会自动回退到对应的 `/sse` 握手流程，再通过返回的 `/messages/?session_id=...` 地址继续调用
-- `MCP_DEV_URL` 用于覆盖首次请求的 MCP 地址；只有当该 URL 以 `/mcp` 结尾且返回 `404` 时，脚本才会自动派生对应的 `/sse`
-- 命令行参数使用 `--kebab-case value` 形式，脚本会自动转换为 MCP 请求里的 `snake_case`
+- 默认请求地址为 `http://127.0.0.1:${MCP_HOST_PORT:-8080}/mcp`
+- 命令行参数使用 `--kebab-case value` 形式，脚本自动转换为 `snake_case`
 
 ## 常见问题
 
 | 问题 | 解决方案 |
 |------|---------|
 | MCP 连接失败 | 检查 `docker compose ps` 确认服务运行中 |
-| Skills 未加载 | 确认 SKILL.md 文件名大小写正确 |
+| Skills 未加载 | 确认 SKILL.md 文件名大小写正确，frontmatter 包含 name/description |
 | Token 过期 | 调用 `xianyu_login` 重新扫码登录 |
 
 ## 相关文档
 
 - [闲鱼 MCP Server 部署指南](../docker/README.md)
-- [OpenCode MCP 文档](https://opencode.ai/docs/zh-cn/mcp-servers)
-- [OpenCode Skills 文档](https://opencode.ai/docs/zh-cn/skills)
+- [Skills 安装详解](./skills-setup.md)
+- [OpenCode MCP 官方文档](https://opencode.ai/docs/zh-cn/mcp-servers/)
+- [OpenCode Skills 官方文档](https://opencode.ai/docs/zh-cn/skills/)
