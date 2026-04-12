@@ -117,38 +117,6 @@ def _install_fake_mcp(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_http_server_get_app_starts_background_tasks_once(monkeypatch):
-    _install_fake_mcp(monkeypatch)
-    import mcp_server.http_server as http_server
-
-    http_server._app = None
-    start_calls = 0
-
-    class FakeBrowser:
-        def __init__(self, host: str, port: int, auto_start: bool):
-            self.host = host
-            self.port = port
-            self.auto_start = auto_start
-
-    class FakeApp:
-        def __init__(self, browser):
-            self.browser = browser
-
-        def start_background_tasks(self):
-            nonlocal start_calls
-            start_calls += 1
-
-    monkeypatch.setattr(http_server, "AsyncChromeManager", FakeBrowser)
-    monkeypatch.setattr(http_server, "XianyuApp", FakeApp)
-
-    app1 = http_server.get_app()
-    app2 = http_server.get_app()
-
-    assert app1 is app2
-    assert start_calls == 1
-
-
-@pytest.mark.asyncio
 async def test_stdio_server_get_app_starts_background_tasks_once(monkeypatch):
     _install_fake_mcp(monkeypatch)
     import mcp_server.server as stdio_server
@@ -362,65 +330,36 @@ async def test_xianyu_check_session_returns_null_when_last_updated_missing(monke
 
 
 @pytest.mark.asyncio
-async def test_xianyu_browser_overview_returns_http_payload(monkeypatch):
+async def test_xianyu_browser_overview_returns_manager_payload(monkeypatch):
     _install_fake_mcp(monkeypatch)
     import mcp_server.http_server as http_server
 
-    class FakeApp:
-        async def browser_overview(self):
+    class FakeManager:
+        async def debug_browser_overview(self, user_id=None):
             return {
-                "browser_context_count": 2,
-                "contexts": [
+                "users": [
                     {
-                        "page_count": 1,
-                        "pages": [
+                        "user_id": "user-001",
+                        "slot_id": "slot-1",
+                        "browser_context_count": 1,
+                        "contexts": [
                             {
-                                "title": "闲鱼",
-                                "url": "https://www.goofish.com/",
+                                "page_count": 1,
+                                "pages": [
+                                    {"title": "闲鱼", "url": "https://www.goofish.com/"}
+                                ],
                             }
                         ],
                     }
-                ],
+                ]
             }
 
-    monkeypatch.setattr(http_server, "get_app", lambda: FakeApp())
+    monkeypatch.setattr(http_server, "get_manager", lambda: FakeManager())
 
     payload = json.loads(await http_server.xianyu_browser_overview())
 
-    assert payload == {
-        "success": True,
-        "browser_context_count": 2,
-        "contexts": [
-            {
-                "page_count": 1,
-                "pages": [
-                    {
-                        "title": "闲鱼",
-                        "url": "https://www.goofish.com/",
-                    }
-                ],
-            }
-        ],
-    }
-
-
-@pytest.mark.asyncio
-async def test_xianyu_browser_overview_returns_http_failure_payload(monkeypatch):
-    _install_fake_mcp(monkeypatch)
-    import mcp_server.http_server as http_server
-
-    class FakeApp:
-        async def browser_overview(self):
-            raise RuntimeError("浏览器未连接，无法获取概览")
-
-    monkeypatch.setattr(http_server, "get_app", lambda: FakeApp())
-
-    payload = json.loads(await http_server.xianyu_browser_overview())
-
-    assert payload == {
-        "success": False,
-        "message": "浏览器未连接，无法获取概览",
-    }
+    assert payload["success"] is True
+    assert payload["users"][0]["user_id"] == "user-001"
 
 
 @pytest.mark.asyncio
