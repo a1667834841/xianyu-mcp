@@ -58,7 +58,7 @@ def test_parse_call_rejects_missing_flag_value():
     module = load_module()
 
     try:
-        module.parse_call_args(["xianyu_show_qr", "--user-id"])
+        module.parse_call_args(["xianyu_login", "--user-id"])
     except ValueError as exc:
         assert "missing value" in str(exc)
     else:

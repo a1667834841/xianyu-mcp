@@ -289,7 +289,7 @@ sign = generate_sign(token, timestamp, data)
 **原因**: Cookie 过期或无效。
 
 **解决方案**:
-- 调用 `xianyu_login` 或 `xianyu_show_qr` 重新登录
+- 调用 `xianyu_login` 重新登录；未登录时该接口直接返回二维码
 - 或调用 `xianyu_refresh_token` 刷新
 
 ---

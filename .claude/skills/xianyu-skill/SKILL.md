@@ -45,7 +45,6 @@ description: Use when managing one or more Xianyu accounts via MCP, especially w
 | `xianyu_create_user` | 创建新用户 | `display_name?` | 需要新增账号 |
 | `xianyu_get_user_status` | 查看单个用户详情 | `user_id` | 需要确认某个账号是否就绪 |
 | `xianyu_login` | 对指定用户发起登录 | `user_id` | 登录入口首选 |
-| `xianyu_show_qr` | 重新展示二维码 | `user_id` | 已有用户，只需重开二维码 |
 | `xianyu_check_session` | 检查某用户登录态 | `user_id` | 搜索/发布前核验状态 |
 | `xianyu_refresh_token` | 刷新某用户 token | `user_id` | token 过期或用户明确要求刷新 |
 | `xianyu_search` | 搜索商品 | `keyword`, `user_id?` | 查商品、做选品 |
@@ -132,20 +131,6 @@ description: Use when managing one or more Xianyu accounts via MCP, especially w
 3. `xianyu_login(user_id)`
 4. 把 `qr_code.public_url` 发给用户扫码
 5. 用户扫码后调用 `xianyu_check_session(user_id)` 确认成功
-
-### `xianyu_show_qr`
-
-给指定用户重新展示二维码。
-
-**必须参数：**
-- `user_id`
-
-**适用场景：**
-- 你已经确定用户存在，只是想重新拿一次二维码
-- 用户上次没扫成，不想重复走完整登录判断逻辑
-
-**注意：**
-- 它不替代 `xianyu_check_session(user_id)`。
 
 ### `xianyu_check_session`
 

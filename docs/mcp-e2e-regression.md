@@ -23,15 +23,15 @@
 - `docker compose up -d --force-recreate browser mcp-server`
 - `curl -N --max-time 5 http://127.0.0.1:8080/sse`
 - `curl --max-time 15 -X POST http://127.0.0.1:8080/rest/search -H "Content-Type: application/json" -d '{"keyword":"iphone","rows":2}'`
-- `curl --max-time 60 http://127.0.0.1:8080/rest/show_qr`
+- `curl --max-time 60 -X POST http://127.0.0.1:8080/rest/login -H "Content-Type: application/json" -d '{"user_id":"user-001"}'`
 - 通过 `/sse` + `/messages/?session_id=...` 实际完成 `initialize`、`tools/list`、`tools/call`
-- `tools/call` 已覆盖：`xianyu_check_session`、`xianyu_search`、`xianyu_refresh_token`、`xianyu_show_qr`、`xianyu_login`
+- `tools/call` 已覆盖：`xianyu_check_session`、`xianyu_search`、`xianyu_refresh_token`、`xianyu_login`
 
 本次观察到的现象：
 
 - `/sse` 会立即返回 `event: endpoint`，随后因连接保持被 `curl --max-time` 主动超时，这属于正常现象
 - `rest/search` 返回 `200` 且成功返回搜索结果
-- `rest/show_qr` 在冷启动后可能需要约 `15s+` 才返回二维码 JSON
+- `rest/login` 在冷启动后可能需要约 `15s+` 才返回二维码 JSON
 - `xianyu_check_session` 返回了 `valid=false`，但工具链路本身是通的，说明当前问题是登录态过期，不是服务不可用
 
 ## 前置条件
@@ -65,8 +65,8 @@
 
 - 多用户 MCP 回归前，先确认本次要验证的 `user_id`
 - `xianyu_check_session --user-id <user_id>` 返回 `valid=true`：说明该用户登录态可直接复用
-- 返回 `valid=false`：说明该用户 Cookie 已过期，但只要 `show_qr`、`login` 能正常给出二维码，仍可判定二维码链路通过
-- `xianyu_login` 与 `xianyu_show_qr` 的目标，是验证指定用户的二维码生成和返回链路，不要求回归时必须现场扫码
+- 返回 `valid=false`：说明该用户 Cookie 已过期，但只要 `login` 能正常给出二维码，仍可判定二维码链路通过
+- `xianyu_login` 的目标，是验证指定用户的二维码生成和返回链路，不要求回归时必须现场扫码
 
 ## 重新编译镜像步骤
 
@@ -136,7 +136,7 @@ curl: (28) Operation timed out after 5001 milliseconds with 81 bytes received
 
 这一组 `/rest/*` 接口主要用于底层调试和兼容性检查。
 
-注意：当前项目主线已经是多用户 MCP 模型，而 `/rest/check_session`、`/rest/search`、`/rest/show_qr` 仍是未显式传 `user_id` 的单用户调试接口。因此这部分只能证明服务进程、浏览器连接和基础链路正常，不等价于多用户 MCP 主流程已完成验证。
+注意：当前项目主线已经是多用户 MCP 模型，而 `/rest/check_session`、`/rest/search`、`/rest/login` 仍是未显式传 `user_id` 的单用户调试接口。因此这部分只能证明服务进程、浏览器连接和基础链路正常，不等价于多用户 MCP 主流程已完成验证。
 
 ### 1. `/rest/check_session`
 
@@ -180,12 +180,12 @@ curl --max-time 15 -X POST http://127.0.0.1:8080/rest/search \
 - 返回 `200` 且 `success=true`
 - `items` 非空，或至少能看见明确的业务错误信息而不是 500/超时
 
-### 3. `/rest/show_qr`
+### 3. `/rest/login`
 
 执行：
 
 ```bash
-curl --max-time 60 http://127.0.0.1:8080/rest/show_qr
+curl --max-time 60 -X POST http://127.0.0.1:8080/rest/login -H "Content-Type: application/json" -d '{"user_id":"user-001"}'
 ```
 
 本次实际返回示例：
@@ -215,7 +215,7 @@ curl --max-time 60 http://127.0.0.1:8080/rest/show_qr
 
 1. `xianyu_list_users`
 2. `xianyu_check_session`
-3. `xianyu_show_qr`
+3. `xianyu_login`
 4. `xianyu_search`
 5. 如有需要，再补 `xianyu_refresh_token`
 
@@ -232,7 +232,7 @@ curl --max-time 60 http://127.0.0.1:8080/rest/show_qr
 ```bash
 ./scripts/mcp-dev call xianyu_list_users
 ./scripts/mcp-dev call xianyu_check_session --user-id user-001
-./scripts/mcp-dev call xianyu_show_qr --user-id user-001
+./scripts/mcp-dev call xianyu_login --user-id user-001
 ./scripts/mcp-dev call xianyu_check_session --user-id user-001
 ./scripts/mcp-dev call xianyu_search --user-id user-001 --keyword 机械键盘 --rows 3
 ```
@@ -242,7 +242,7 @@ curl --max-time 60 http://127.0.0.1:8080/rest/show_qr
 ```bash
 MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_list_users
 MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_check_session --user-id user-001
-MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_show_qr --user-id user-001
+MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_login --user-id user-001
 MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_search --user-id user-001 --keyword 机械键盘 --rows 3
 ```
 
@@ -256,7 +256,7 @@ MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_search --us
 
 - `xianyu_list_users` 能正常返回用户和槽位信息，说明基础工具调用可用
 - `xianyu_check_session` 返回结构化结果即可；`valid=true` 或 `valid=false` 都不影响链路判定
-- `xianyu_show_qr` 在未登录时能返回二维码信息，就说明二维码链路可用
+- `xianyu_login` 在未登录时能返回二维码信息，就说明二维码链路可用
 - `xianyu_search` 能返回商品结果，说明业务侧主链路可用
 - 如果需要验证续期链路，再补跑 `xianyu_refresh_token`
 
@@ -266,7 +266,7 @@ MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_search --us
 
 - `xianyu_list_users` 返回已配置用户列表
 - `xianyu_check_session` 返回 `success=true`，并带当前登录态信息
-- `xianyu_show_qr` 返回 `success=true`；未登录时包含 `qr_code`，已登录时可能直接返回已登录状态
+- `xianyu_login` 返回 `success=true`；未登录时包含 `qr_code`，已登录时可能直接返回已登录状态
 - `xianyu_search` 返回 `success=true`，并包含商品结果
 
 如果上述命令失败，但前面的 `/sse` 检查是正常的，再进一步排查 `scripts/mcp-dev` 指向的地址、目标用户数据目录和当前登录态。
@@ -304,16 +304,16 @@ MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_search --us
 - 镜像可成功重建
 - `browser`、`mcp-server` 容器正常启动，`mcp-server` 进入 `healthy`
 - `/sse` 返回 `event: endpoint` 和有效 `session_id`
-- `/rest/check_session`、`/rest/search`、`/rest/show_qr` 均可返回有效 JSON
+- `/rest/check_session`、`/rest/search`、`/rest/login` 均可返回有效 JSON
 - 业务级 MCP 回归命令可成功覆盖：
-  `xianyu_list_users`、`xianyu_check_session`、`xianyu_show_qr`、`xianyu_search`
+  `xianyu_list_users`、`xianyu_check_session`、`xianyu_login`、`xianyu_search`
 
 ### 部分通过
 
 满足以下情况之一：
 
 - 基础链路都通，但当前登录态过期，`check_session` 返回 `valid=false`
-- `show_qr` 能返回二维码，但未现场扫码确认登录
+- `login` 能返回二维码，但未现场扫码确认登录
 - 业务级 MCP 回归通过，但 `xianyu_publish` 未做真实发布验证
 
 ### 失败
@@ -323,7 +323,7 @@ MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_search --us
 - 镜像构建失败
 - 容器无法启动或 `mcp-server` 长时间不进入 `healthy`
 - `/sse` 无法返回 `event: endpoint`
-- `/rest/search`、`/rest/show_qr`、`/rest/check_session` 持续 500 或无响应
+- `/rest/search`、`/rest/login`、`/rest/check_session` 持续 500 或无响应
 - `scripts/mcp-dev` 关键命令持续失败
 - 关键工具调用直接报错，且不是登录态过期这类业务外部因素
 

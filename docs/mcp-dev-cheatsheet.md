@@ -51,10 +51,10 @@ MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_list_users
 ./scripts/mcp-dev call xianyu_check_session --user-id user-001
 ```
 
-生成二维码：
+登录并在需要时拿二维码：
 
 ```bash
-./scripts/mcp-dev call xianyu_show_qr --user-id user-001
+./scripts/mcp-dev call xianyu_login --user-id user-001
 ```
 
 指定用户搜索：
@@ -76,7 +76,7 @@ MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_list_users
 ```bash
 MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_list_users
 MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_check_session --user-id user-001
-MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_show_qr --user-id user-001
+MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_login --user-id user-001
 MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_search --user-id user-001 --keyword 机械键盘 --rows 5
 ```
 
@@ -94,10 +94,10 @@ MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_search --us
 ./scripts/mcp-dev call xianyu_check_session --user-id user-001
 ```
 
-3. 如果失效，重新出二维码
+3. 如果失效，直接重新调用登录
 
 ```bash
-./scripts/mcp-dev call xianyu_show_qr --user-id user-001
+./scripts/mcp-dev call xianyu_login --user-id user-001
 ```
 
 4. 扫码后再次确认
@@ -114,5 +114,5 @@ MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_search --us
 
 ## 当前环境注意事项
 
-- 主栈如果没有完整 R2 凭证，`xianyu_show_qr` 可能只返回原始 `qrcodeCheck` 链接
+- 主栈如果没有完整 R2 凭证，`xianyu_login` 可能只返回原始 `qrcodeCheck` 链接
 - 如果需要 `https://img.ggball.top/...` 这种公网二维码，优先用带 `MCP_DEV_URL=http://127.0.0.1:18090/mcp` 的 E2E 栈

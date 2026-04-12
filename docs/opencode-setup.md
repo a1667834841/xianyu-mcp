@@ -104,7 +104,7 @@ help skills
 
 ```bash
 ./scripts/mcp-dev call xianyu_list_users
-./scripts/mcp-dev call xianyu_show_qr --user-id user-001
+./scripts/mcp-dev call xianyu_login --user-id user-001
 ./scripts/mcp-dev call xianyu_check_session --user-id user-001
 ./scripts/mcp-dev call xianyu_search --user-id user-001 --keyword 机械键盘 --rows 5
 ```
