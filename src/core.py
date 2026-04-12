@@ -7,7 +7,7 @@ import asyncio
 import json
 import time
 import base64
-from typing import Optional, List, Dict, Any
+from typing import Callable, Optional, List, Dict, Any
 from dataclasses import dataclass, asdict
 import logging
 from urllib.parse import parse_qs, urlparse
@@ -106,12 +106,16 @@ class XianyuApp:
         self,
         browser: Optional[AsyncChromeManager] = None,
         settings: Optional[AppSettings] = None,
+        keepalive_on_cookie_saved: Optional[Callable[[str | None], None]] = None,
+        keepalive_on_error: Optional[Callable[[str], None]] = None,
     ):
         """
         初始化 XianyuApp
 
         Args:
             browser: 浏览器管理器实例（可选）
+            keepalive_on_cookie_saved: 回调函数，cookie保存成功后调用
+            keepalive_on_error: 回调函数，keepalive出错时调用
         """
         resolved_settings = (
             settings or getattr(browser, "settings", None) or load_settings()
@@ -119,7 +123,6 @@ class XianyuApp:
         self.settings = resolved_settings
 
         self.browser = browser or AsyncChromeManager(settings=resolved_settings)
-        # If the caller provided an already-constructed browser, align its settings for consistency.
         try:
             self.browser.settings = resolved_settings
         except Exception:
@@ -140,10 +143,10 @@ class XianyuApp:
             session=self.session,
             interval_minutes=resolved_settings.keepalive.interval_minutes,
             page_coordinator=self.page_coordinator,
+            on_cookie_saved=keepalive_on_cookie_saved,
+            on_error=keepalive_on_error,
         )
-        # Public name used by tests and other modules.
         self.keepalive = keepalive
-        # Backward-compatible alias (older drafts used keepalive_service).
         self.keepalive_service = keepalive
         self._background_started = False
 
@@ -192,6 +195,10 @@ class XianyuApp:
             await self.keepalive.stop()
         except Exception:
             logger.exception("Failed to stop keepalive service; continuing shutdown.")
+
+    def background_tasks_running(self) -> bool:
+        task = getattr(self.keepalive, "_task", None)
+        return bool(self._background_started and task is not None and not task.done())
 
     # ==================== 会话管理（委托给 session） ====================
 

@@ -1,6 +1,7 @@
 import pytest
 
 from src.browser_pool import BrowserPoolSettings
+from src.keepalive import CookieKeepaliveService
 from src.multi_user_manager import MultiUserManager
 from src.multi_user_registry import MultiUserRegistry
 
@@ -111,3 +112,127 @@ async def test_check_all_sessions_continues_after_one_user_fails(tmp_path):
     assert result[0]["last_error"] == "Session check failed"
     assert result[1]["user_id"] == second.user_id
     assert result[1]["cookie_valid"] is True
+
+
+class _FakeTask:
+    def done(self):
+        return False
+
+
+class _KeepaliveBrowser:
+    def __init__(self):
+        class Page:
+            async def goto(self, url):
+                return None
+
+            async def reload(self):
+                return None
+
+        self.page = Page()
+
+    async def ensure_running(self):
+        return True
+
+    async def get_keepalive_page(self):
+        return self.page
+
+    async def get_full_cookie_string(self):
+        return "cookie=value"
+
+
+class _KeepaliveSession:
+    def __init__(self):
+        self.saved = []
+
+    def save_cookie(self, full_cookie):
+        self.saved.append(full_cookie)
+
+    def get_cookie_status(self, is_valid):
+        assert is_valid is True
+        return {"valid": True, "last_updated_at": "2026-04-12 10:20:30"}
+
+
+@pytest.mark.asyncio
+async def test_keepalive_run_once_emits_cookie_saved_callback():
+    events = []
+    service = CookieKeepaliveService(
+        browser=_KeepaliveBrowser(),
+        session=_KeepaliveSession(),
+        interval_minutes=10,
+        on_cookie_saved=lambda last_updated_at: events.append(last_updated_at),
+        on_error=lambda message: events.append(f"error:{message}"),
+    )
+
+    await service.run_once()
+
+    assert events == ["2026-04-12 10:20:30"]
+
+
+@pytest.mark.asyncio
+async def test_keepalive_run_once_emits_error_callback():
+    events = []
+
+    class FailingBrowser(_KeepaliveBrowser):
+        async def get_full_cookie_string(self):
+            raise RuntimeError("cookie boom")
+
+    service = CookieKeepaliveService(
+        browser=FailingBrowser(),
+        session=_KeepaliveSession(),
+        interval_minutes=10,
+        on_cookie_saved=lambda last_updated_at: events.append(last_updated_at),
+        on_error=lambda message: events.append(message),
+    )
+
+    await service.run_once()
+
+    assert events == ["cookie boom"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_initialized_starts_keepalive_for_valid_users(tmp_path):
+    manager = make_manager(tmp_path)
+    first = manager.create_user()
+    second = manager.create_user()
+
+    class FakeApp:
+        def __init__(self, valid):
+            self.valid = valid
+            self._background_started = False
+            self.keepalive = type("Keepalive", (), {"_task": None})()
+
+        def start_background_tasks(self):
+            self._background_started = True
+            self.keepalive._task = _FakeTask()
+
+        async def stop_background_tasks(self):
+            self._background_started = False
+            self.keepalive._task = None
+
+        def background_tasks_running(self):
+            task = self.keepalive._task
+            return bool(
+                self._background_started and task is not None and not task.done()
+            )
+
+        async def check_session(self):
+            return {
+                "valid": self.valid,
+                "last_updated_at": "2026-04-12 10:30:00" if self.valid else None,
+            }
+
+    manager._runtimes[first.user_id] = type(
+        "Runtime", (), {"entry": first, "app": FakeApp(True)}
+    )()
+    manager._runtimes[second.user_id] = type(
+        "Runtime", (), {"entry": second, "app": FakeApp(False)}
+    )()
+
+    await manager.ensure_initialized()
+
+    first_status = manager.get_user_status(first.user_id)
+    second_status = manager.get_user_status(second.user_id)
+    assert first_status["keepalive_running"] is True
+    assert first_status["status"] == "ready"
+    assert second_status["keepalive_running"] is False
+    assert second_status["status"] == "pending_login"

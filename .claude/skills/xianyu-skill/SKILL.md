@@ -1,391 +1,332 @@
 ---
 name: xianyu-skill
-description: Use when managing Xianyu store via MCP tools - login, search products, publish listings, refresh tokens, or check session validity
+description: Use when managing one or more Xianyu accounts via MCP, especially when you need to create or inspect users, verify login state, search products, copy-publish listings, or troubleshoot session issues.
 ---
 
-# 闲鱼技能 (xianyu-skill)
+# 闲鱼技能
 
-## 概述
+## Overview
 
-通过 MCP 协议操作闲鱼店铺的自动化技能。支持扫码登录、商品搜索、根据对标商品链接复制发布、Token 刷新和会话检查。
+通过闲鱼 MCP 进行多用户店铺操作。核心原则：先确认要操作的 `user_id`，再执行登录、搜索、发布；不要把当前 MCP 当成单用户工具集使用。
 
-## 何时使用
+## When to Use
 
-**应当使用：**
-- 需要通过 MCP 工具管理闲鱼店铺
-- 需要搜索特定商品并获取详细数据
-- 需要复制热门商品的文案和图片并发布
-- Token 过期需要刷新
-- 验证登录状态是否有效
+- 需要查看当前有哪些闲鱼用户、哪个用户可用
+- 需要创建新用户并扫码登录
+- 需要检查某个用户的登录状态、Cookie、Token
+- 需要按关键词搜索商品，并在结果上做二次排序
+- 需要根据对标商品链接复制发布商品
+- 需要排查浏览器上下文、页面空白、搜索卡住等问题
 
-**不适用：**
-- 非闲鱼平台的电商操作
-- 需要绕过平台限制的操作
+**不要用于：**
+- 非闲鱼平台操作
+- 需要绕过平台限制或风控的行为
+- 高风险的批量频繁发布
 
-## 登录约束
+## Core Rules
 
-**重要：在调用任何操作工具前，必须先确保已登录！**
+1. **先选用户，再做操作。**
+   除 `xianyu_list_users` 和 `xianyu_browser_overview` 外，大多数账号相关操作都应明确知道目标 `user_id`。
 
-### 登录检查流程
+2. **多用户场景下不要省略 `user_id`。**
+   `xianyu_search` 虽然允许省略 `user_id`，但这只适合“任意可用账号都行”的场景。当前 MCP 会在所有 `ready` 用户里挑一个可用用户；如果没有就绪用户，会报 `no_available_user`。只要用户指定了账号，或你需要稳定复现结果，就显式传 `user_id`。
 
-1. **首次使用或不确定登录状态时：**
-   - 先调用 `xianyu_check_session` 检查登录状态
-   - 如果返回 `valid: false` 或提示 Cookie 过期，需要重新登录
+3. **搜索接口不能按曝光度排序。**
+   `sort_field` 只支持 `pub_time` 和 `price`。`exposure_score` 是返回字段，不是可直接传给 MCP 的排序参数。用户要“按曝光度排行”时，先搜索，再按 `exposure_score` 在结果里二次排序。
 
-2. **搜索异常时，优先检查登录状态：**
-   - 如果出现以下现象，必须第一时间调用 `xianyu_check_session`，不要先猜测搜索逻辑、性能或页面结构问题
-   - 典型信号包括：搜索长时间无响应、明显变慢、返回空结果、页面被弹窗拦住、接口响应异常、浏览器看起来正常但搜索流程卡住
-   - 这类症状经常不是搜索本身坏了，而是登录态失效后页面交互和接口请求都变得不稳定
-   - 只有在 `xianyu_check_session` 确认 `valid: true` 后，才继续排查搜索逻辑本身
+4. **发布成功不等于一定已正式上架。**
+   `xianyu_publish` 的本质是复制并填充发布表单。特殊类目（如潮玩盲盒）可能保存为草稿；`success: true` 更应理解为“采集和填充流程成功”。
 
-3. **未登录时的处理：**
-   - 当用户提示需要登录或检测到未登录状态时，必须调用 `xianyu_login`
-   - **终端环境**：`xianyu_login` 会自动在终端显示 ASCII 二维码，用户直接扫码即可
-   - **GUI 环境**：二维码会在浏览器中显示
+## Quick Reference
 
-4. **扫码后确认：**
-   - 用户扫码后，调用 `xianyu_check_session` 确认登录成功
-   - 登录成功后方可继续执行其他操作
+| 工具 | 用途 | 关键参数 | 何时优先用 |
+| --- | --- | --- | --- |
+| `xianyu_list_users` | 查看全部用户和状态 | 无 | 用户问“当前有哪些账号” |
+| `xianyu_create_user` | 创建新用户 | `display_name?` | 需要新增账号 |
+| `xianyu_get_user_status` | 查看单个用户详情 | `user_id` | 需要确认某个账号是否就绪 |
+| `xianyu_login` | 对指定用户发起登录 | `user_id` | 登录入口首选 |
+| `xianyu_show_qr` | 重新展示二维码 | `user_id` | 已有用户，只需重开二维码 |
+| `xianyu_check_session` | 检查某用户登录态 | `user_id` | 搜索/发布前核验状态 |
+| `xianyu_refresh_token` | 刷新某用户 token | `user_id` | token 过期或用户明确要求刷新 |
+| `xianyu_search` | 搜索商品 | `keyword`, `user_id?` | 查商品、做选品 |
+| `xianyu_publish` | 复制发布商品 | `user_id`, `item_url` | 根据对标链接填充发布表单 |
+| `xianyu_browser_overview` | 浏览器排障 | 无 | 页面卡住、空白、上下文异常 |
 
-### 二维码扫码方式
+## Tool Guide
 
-登录返回的二维码支持扫码：
+### `xianyu_list_users`
 
-| 字段 | 说明 | 适用场景 |
-|------|------|----------|
-| `public_url` | 公网可访问的二维码图片 URL | **推荐** - 手机扫码 |
-| `text` | 原始 URL | 复制链接到浏览器打开 |
+查看当前全部用户。返回值不是简单 ID 列表，而是带状态的对象数组，常见字段包括：
 
-**推荐扫码流程：**
-1. 访问 `public_url` 打开二维码图片
-2. 用闲鱼 APP 扫码
+- `user_id`
+- `display_name`
+- `status`: 常见值为 `ready`、`pending_login`
+- `enabled`
+- `cookie_valid`
+- `busy`
+- `slot_id`
+- `cdp_host` / `cdp_port`
 
-### 终端环境登录示例
+**适用场景：**
+- 用户问“当前有哪些闲鱼用户”
+- 需要从多个账号里选一个可用账号
+- 需要判断是否已经存在可复用账号
 
-```
-用户：我要搜索机械键盘
-你：请先登录。调用 xianyu_login...
+### `xianyu_create_user`
 
-[调用 xianyu_login]
-
-█▀▀▀▀▀▀▀█ █▀▀▀▀▀▀▀█
-█ ▀▀▀ █ █ ▀▀▀ █
-█▄▄▄▄▄▄▄█ █▄▄▄▄▄▄▄█
-(二维码 ASCII 艺术)
-
-请打开闲鱼 APP 扫码登录...
-
-[用户扫码后]
-
-[调用 xianyu_check_session]
-
-登录成功！现在可以搜索商品了。
-```
-
-**注意：** 在终端环境下，严禁调用浏览器相关操作，所有交互必须通过终端完成。
-
-## 前置条件
-
-**推荐环境：Docker Compose 部署**
-
-- [ ] 已在项目根目录执行 `docker compose up -d`
-- [ ] `mcp-server` 服务可通过 `http://127.0.0.1:8080/sse` 访问
-- [ ] 已按项目 README 完成 MCP 接入配置
-
-**兼容模式：本地 stdio / 手工 Chrome**
-
-如果没有使用 Docker Compose，也可以手动启动本地 Chrome 调试端口并运行 stdio 版 MCP Server；该模式仅用于本地调试，不再作为默认部署方式。
-
-## 可用工具
-
-### 1. xianyu_check_session
-
-**功能：** 检查闲鱼 Cookie 是否有效
-
-**参数：** 无
-
-**返回（Cookie 有效）：**
-```json
-{
-  "success": true,
-  "valid": true,
-  "message": "Cookie 有效"
-}
-```
-
-**返回（Cookie 无效）：**
-```json
-{
-  "success": true,
-  "valid": false,
-  "message": "Cookie 已过期，需要重新登录"
-}
-```
-
-**说明：**
-- 调用用户信息接口验证当前登录状态
-- 建议在调用其他工具前先检查登录状态
-
-### 2. xianyu_login
-
-**功能：** 访问闲鱼首页，自动检测登录状态。已登录则返回 token，未登录则显示二维码。
-
-**参数：** 无
-
-**返回（已登录）：**
-```json
-{
-  "success": true,
-  "logged_in": true,
-  "token": "8d5ad923e6ae3191423a...",
-  "message": "已登录"
-}
-```
-
-**返回（未登录，需要扫码）：**
-```json
-{
-  "success": true,
-  "logged_in": false,
-  "qr_code": {
-    "url": "https://passport.goofish.com/qrcodeCheck.htm?lgToken=xxx",
-    "public_url": "https://img.ggball.top/xianyu/qr-xxx.png",
-    "text": "https://passport.goofish.com/qrcodeCheck.htm?lgToken=xxx"
-  },
-  "message": "请扫码登录。扫码后浏览器会自动跳转，然后请调用 check_session 确认登录状态"
-}
-```
-
-**说明：**
-- 访问闲鱼首页，自动检测是否已登录
-- 已登录：直接返回 token
-- 未登录：获取页面触发的二维码接口，显示二维码
-- **用户扫码后，浏览器页面会自动跳转完成登录**
-- 扫码完成后，调用 `xianyu_check_session` 确认登录状态
-
-**终端环境登录流程：**
-
-```
-1. 调用 xianyu_login
-2. 如果已登录，返回 token
-3. 如果未登录，终端显示 ASCII 二维码
-4. 用户扫码（浏览器自动跳转）
-5. 调用 xianyu_check_session 确认登录成功
-```
-
-### 3. xianyu_show_qr
-
-**功能：** 显示登录二维码（仅用于未登录场景）
-
-**参数：** 无
-
-**返回（已登录）：**
-```json
-{
-  "success": true,
-  "logged_in": true,
-  "message": "已登录，无需扫码"
-}
-```
-
-**返回（未登录，显示二维码）：**
-```json
-{
-  "success": true,
-  "logged_in": false,
-  "qr_code": {
-    "url": "https://passport.goofish.com/qrcodeCheck.htm?lgToken=xxx",
-    "public_url": "https://img.ggball.top/xianyu/qr-xxx.png",
-    "text": "https://..."
-  },
-  "message": "请扫码登录。扫码后浏览器会自动跳转，然后请调用 check_session 确认登录状态"
-}
-```
-
-**说明：**
-- 此方法仅在未登录场景下使用
-- 推荐直接使用 `xianyu_login`，它会自动检测登录状态
-
-### 4. xianyu_search
-
-**功能：** 搜索商品并获取详细数据（自动去重，支持多页获取）
+创建一个新用户，并分配浏览器 slot 和 CDP 端口。
 
 **参数：**
-| 参数 | 类型 | 必填 | 说明 |
-|-----|------|-----|------|
-| keyword | string | 是 | 搜索关键词 |
-| rows | integer | 否 | 获取数量（默认 30，自动翻页） |
-| min_price | number | 否 | 最低价格 |
-| max_price | number | 否 | 最高价格 |
-| free_ship | boolean | 否 | 是否只看包邮（默认 false） |
-| sort_field | string | 否 | 排序字段（pub_time/price） |
-| sort_order | string | 否 | 排序方向（ASC/DESC） |
+- `display_name`：可选。不给时通常会自动使用类似 `user-001` 的默认名。
 
-**返回：**
-```json
-{
-  "success": true,
-  "total": 10,
-  "items": [
-    {
-      "item_id": "123456789",
-      "title": "商品标题",
-      "price": "99.00",
-      "want_cnt": 207,
-      "seller_nick": "卖家昵称",
-      "seller_city": "杭州",
-      "image_urls": ["..."],
-      "detail_url": "https://...",
-      "is_free_ship": true,
-      "publish_time": "2024-11-08"
-    }
-  ]
-}
-```
+**常见返回：**
+- `user_id`
+- `slot_id`
+- `cdp_port`
+- `status`，新建后通常是 `pending_login`
 
-**说明：**
-- 当 `rows > 30` 时自动翻页获取多页数据
-- 返回结果自动去重，不会有重复商品
-- 每页等待新 API 响应确保数据不同
+**要点：**
+- 创建成功后不要直接搜索或发布，下一步通常是 `xianyu_login(user_id)`。
 
-**默认输出格式（Markdown 表格）：**
+### `xianyu_get_user_status`
 
-调用 `xianyu_search` 后，默认以 Markdown 表格格式展示结果（按曝光度倒序排列）：
+查询单个用户的详细状态，是多用户场景下最重要的“定点检查”工具。
 
-| 序号 | 商品名称 | 价格 | 曝光度 | 发布时间 | 商品链接 |
-|:----:|---------|:----:|:--------:|---------|---------|
-| 1 | 超值盲盒机械键盘... | ¥26 | 15800 | 2024-11-08 | [链接](https://...) |
-| 2 | 全新 狼蛛 F2088pro... | ¥55 | 20700 | 2024-11-07 | [链接](https://...) |
+**必须参数：**
+- `user_id`
 
-**字段说明：**
-- **序号**: 从 1 开始的序号
-- **商品名称**: 标题前 30 字，超出显示省略号
-- **价格**: 显示为 ¥XX 格式
-- **曝光度**: 根据公式计算 `曝光度 = (想要人数 × 100) / (天数差 + 1)`
-- **发布时间**: 商品发布日期（YYYY-MM-DD）
-- **商品链接**: 可点击的闲鱼商品链接
+**重点字段解释：**
+- `status`: `ready` 表示通常可直接操作；`pending_login` 表示还需登录
+- `cookie_valid`: 当前 Cookie 是否有效
+- `browser_connected`: 浏览器实例是否已连接
+- `keepalive_running`: 后台保活是否运行中
+- `busy`: 该用户当前是否正在执行任务
+- `last_error`: 最近一次错误
 
-**曝光度计算公式：**
+**适用场景：**
+- 用户指定某个账号，如 `user-001`
+- 需要确认某个用户能否立刻执行搜索或发布
 
-```
-曝光度 = (想要人数 × 100) / (DAYS(采集时间，发布时间)/24 + 1)
-```
+**注意：**
+- `xianyu_get_user_status` 更适合看运行状态和错误信息。
+- 只看到 `status: ready` 不代表一定可以直接执行关键操作；真正要判断登录态是否有效，仍以 `xianyu_check_session(user_id)` 为准。
 
-- **想要人数**: 商品页面上的"XX 人想要"数值
-- **采集时间**: 当前搜索时间
-- **发布时间**: 商品上架时间
-- **天数差**: 发布至今的小时数除以 24 转换为天数
+### `xianyu_login`
 
-**示例：**
-- 商品发布 1 天，想要 100 人 → 曝光度 = (100×100)/(1+1) = 5000
-- 商品发布 7 天，想要 100 人 → 曝光度 = (100×100)/(7+1) = 1250
-- 商品刚发布（0 天），想要 100 人 → 曝光度 = (100×100)/(0+1) = 10000
+对指定用户发起登录。它是默认登录入口，不要先假设系统存在“当前默认用户”。
 
-**排序说明：** 搜索结果默认按曝光度倒序排列，曝光度高的商品排在前面，优先展示近期热门商品。
+**必须参数：**
+- `user_id`
 
-### 5. xianyu_publish
+**常见分支：**
+- 已登录：返回 `logged_in: true`
+- 未登录：返回 `logged_in: false` 和 `qr_code`
 
-**功能：** 根据商品链接复制发布新商品
+**二维码字段：**
+- `public_url`: 最适合直接发给用户扫码
+- `text`: 原始登录链接
+
+**标准流程：**
+1. `xianyu_list_users`
+2. 不存在目标用户就 `xianyu_create_user`
+3. `xianyu_login(user_id)`
+4. 把 `qr_code.public_url` 发给用户扫码
+5. 用户扫码后调用 `xianyu_check_session(user_id)` 确认成功
+
+### `xianyu_show_qr`
+
+给指定用户重新展示二维码。
+
+**必须参数：**
+- `user_id`
+
+**适用场景：**
+- 你已经确定用户存在，只是想重新拿一次二维码
+- 用户上次没扫成，不想重复走完整登录判断逻辑
+
+**注意：**
+- 它不替代 `xianyu_check_session(user_id)`。
+
+### `xianyu_check_session`
+
+检查某个用户的登录态是否仍然有效。
+
+**必须参数：**
+- `user_id`
+
+**常见返回：**
+- `valid: true`：可以继续搜索、发布等操作
+- `valid: false`：需要重新登录
+- `last_updated_at`：最近一次更新时间
+
+**适用场景：**
+- 首次接手某个用户时
+- 搜索变慢、返回空、卡住时
+- 发布前确认登录态
+
+**不要犯的错：**
+- 不要把它当成“无参数全局检查”；多用户场景必须指定 `user_id`
+
+### `xianyu_refresh_token`
+
+为指定用户刷新 token。
+
+**必须参数：**
+- `user_id`
+
+**适用场景：**
+- 用户明确要求刷新 token
+- 你已确认问题与 token 过期有关
+
+**建议：**
+- 刷新后可再执行一次 `xianyu_check_session(user_id)` 做确认
+- 若刷新失败，下一步通常是重新登录，而不是继续盲目搜索或发布
+
+### `xianyu_search`
+
+按关键词搜索商品，返回唯一商品列表。
 
 **参数：**
-| 参数 | 类型 | 必填 | 说明 |
-|-----|------|-----|------|
-| item_url | string | 是 | 对标商品链接 |
-| new_price | number | 否 | 新商品价格（默认原价） |
-| new_description | string | 否 | 新商品描述（默认原描述） |
-| condition | string | 否 | 成色（默认"全新"） |
+- `keyword`：必填
+- `user_id`：可选，但多用户场景推荐显式传入
+- `rows`：目标数量，默认 30
+- `min_price` / `max_price`
+- `free_ship`
+- `sort_field`: 仅支持 `pub_time` 或 `price`
+- `sort_order`: `ASC` 或 `DESC`
 
-**返回：**
-```json
-{
-  "success": true,
-  "item_id": null,
-  "error": null,
-  "message": "表单填充完成，请检查浏览器窗口",
-  "captured_item": {
-    "title": "商品标题前 50 字",
-    "price": 99.0,
-    "images": 5,
-    "category": "分类名称"
-  }
-}
-```
+**常见返回字段：**
+- `user_id` / `slot_id`：实际执行搜索的账号
+- `requested` / `total`
+- `stop_reason`
+- `stale_pages`
+- `items`
 
-### 6. xianyu_refresh_token
+`items` 中常见字段：
+- `item_id`
+- `title`
+- `price`
+- `want_cnt`
+- `detail_url`
+- `publish_time`
+- `exposure_score`
 
-**功能：** 刷新 Token（当 Token 过期时）
+**要点：**
+- `rows > 30` 时会自动翻页
+- 结果会自动去重
+- 如果用户要求“按曝光度排序”，先拉取结果，再按 `exposure_score` 二次排序
+- 如果用户只说“第 2 个”“排名第二”但没说排序依据，默认按你当前展示给用户的列表顺序理解；如果此前上下文已经明确是“按曝光度排行”，就按曝光度重排后的顺序理解。仍有歧义时，要先说明你采用的排序依据。
+- 如果没有可用账号且未传 `user_id`，可能收到 `no_available_user`
 
-**参数：** 无
+### `xianyu_publish`
 
-**返回：**
-```json
-{
-  "success": true,
-  "token": "8d5ad923e6ae3191423a...",
-  "full_cookie": "8d5ad923e6ae3191423af7cc4412a019_1775398734523",
-  "message": "Token 刷新成功"
-}
-```
+根据对标商品链接复制发布商品。
 
-### 7. xianyu_check_session
+**必须参数：**
+- `user_id`
+- `item_url`
 
-**功能：** 检查 Cookie 是否有效
+**可选参数：**
+- `new_price`
+- `new_description`
+- `condition`，默认 `全新`
 
-**参数：** 无
+**输入来源：**
+- 通常可直接把搜索结果中的 `detail_url` 作为这里的 `item_url`
 
-**返回：**
-```json
-{
-  "success": true,
-  "valid": true,
-  "message": "Cookie 有效"
-}
-```
+**返回理解：**
+- `success: true`：复制和填充流程成功
+- `item_data`：抓取到的标题、描述、分类、图片等
+- `item_id` 可能为 `null`
 
-## 使用示例
+**重要：**
+- 不要把 `success: true` 直接理解成“商品已正式上架”
+- 潮玩盲盒等类目可能自动保存为草稿
 
-### 登录并搜索商品
+### `xianyu_browser_overview`
 
-```
-1. 调用 xianyu_login 登录
-2. 调用 xianyu_search 搜索"机械键盘"，rows=10
-3. 查看返回的商品列表
-```
+查看浏览器 context 和页面信息，用于排障。
 
-### 复制发布商品
+**无参数。**
 
-```
-1. 调用 xianyu_check_session 检查登录状态
-2. 如果 Cookie 有效，调用 xianyu_publish:
-   - item_url: "https://www.goofish.com/item?id=123456789"
-   - new_price: 150.0
-   - condition: "全新"
-3. 检查返回结果
-```
+**常见返回：**
+- `browser_context_count`
+- `contexts[].page_count`
+- `contexts[].pages[].title`
+- `contexts[].pages[].url`
 
-### 刷新 Token
+**适用场景：**
+- 页面一直卡在 `about:blank`
+- 登录后页面没有跳转
+- 搜索或发布时怀疑浏览器页面异常
 
-```
-当收到 Token 过期错误时:
-1. 调用 xianyu_refresh_token
-2. 使用返回的新 Token 继续操作
-```
+## Recommended Workflows
 
-## 常见问题
+### 查看当前用户并选择账号
 
-| 问题 | 解决方案 |
-|-----|---------|
-| 登录超时 | 检查 Chrome 是否启动（端口 9222） |
-| 搜索返回空/很慢/卡住 | **先调用 `xianyu_check_session` 检查是否已掉登录**，确认 `valid: true` 后再排查关键词或搜索逻辑 |
-| 发布失败 | 检查商品链接格式是否正确 |
-| Token 过期 | 调用 xianyu_refresh_token 或重新登录 |
-| Cookie 无效 | 调用 xianyu_login 重新登录 |
+1. 调用 `xianyu_list_users`
+2. 如果用户指定了账号，再调用 `xianyu_get_user_status(user_id)`
+3. 如果接下来要执行搜索、发布、刷新 token 等关键操作，再补一次 `xianyu_check_session(user_id)`
+4. 只有在 `xianyu_check_session(user_id)` 返回 `valid: true` 时，再继续业务操作
 
-## 注意事项
+### 新用户登录
 
-1. **浏览器要求** - 需要安装 Google Chrome 并启动调试端口
-2. **Token 有效期** - Token 约 24 小时过期
-3. **发布频率** - 避免短时间大量发布，可能触发风控
-4. **特殊类目** - 潮玩盲盒等需要资质，会自动保存草稿
-5. **技能名称** - 本技能名称为 **xianyu-skill**
-6. **排查顺序** - 搜索问题先查登录态，再查关键词、页面结构、响应监听和性能；不要跳过 session 检查直接猜搜索逻辑故障
+1. `xianyu_create_user(display_name?)`
+2. `xianyu_login(user_id)`
+3. 把 `qr_code.public_url` 发给用户
+4. 用户扫码后执行 `xianyu_check_session(user_id)`
+
+### 指定用户搜索并按曝光度重排
+
+1. `xianyu_check_session(user_id)`
+2. `xianyu_search(keyword, user_id, rows, sort_field, sort_order)`
+3. 如果用户要“按曝光度”，在返回的 `items` 上按 `exposure_score` 重新排序
+
+### 搜索结果里选商品并复制发布
+
+1. `xianyu_check_session(user_id)`
+2. `xianyu_search(...)`
+3. 取目标商品的 `detail_url`
+4. `xianyu_publish(user_id, item_url=detail_url, ...)`
+5. 向用户说明发布结果更接近“表单填充完成”，必要时提醒可能是草稿
+
+### 排障顺序
+
+1. `xianyu_get_user_status(user_id)`
+2. `xianyu_check_session(user_id)`
+3. `xianyu_browser_overview()`
+4. 再排查搜索关键词、排序参数或页面状态
+
+## Common Mistakes
+
+| 错误 | 正确做法 |
+| --- | --- |
+| 把 `xianyu_check_session` 当成无参数工具 | 多用户场景必须传 `user_id` |
+| 忽略 `xianyu_refresh_token(user_id)` 的 `user_id` | 指定用户刷新 token，必要时再复查 session |
+| 以为搜索可以直接按曝光度排序 | 先搜索，再按 `exposure_score` 二次排序 |
+| 省略 `user_id` 还以为一定会用当前账号 | 省略时可能随机使用某个 `ready` 用户，或直接报 `no_available_user` |
+| `xianyu_publish` 成功就当成已正式上架 | 正确理解为复制/填充成功，特殊类目可能是草稿 |
+| 只看到 `status: ready` 就认为一定已登录 | 真正执行关键操作前，再跑一次 `xianyu_check_session(user_id)` |
+| 用户指定了 `user-001`，却只看 `xianyu_list_users` 不看单用户详情 | 再补一次 `xianyu_get_user_status(user_id)` |
+| 用户只说“排名第二”，却没说按什么排 | 默认按当前展示顺序理解；若上下文已明确“按曝光度排行”，按曝光度顺序处理，并说明你的依据 |
+| 扫码后不复查登录态 | 扫码后必须调用 `xianyu_check_session(user_id)` |
+
+## Example
+
+用户说：`创建一个新用户，登录后搜索 50 个泡泡玛特商品，并发布曝光度第二的商品。`
+
+推荐步骤：
+
+1. `xianyu_create_user`
+2. `xianyu_login(user_id)`
+3. 把 `qr_code.public_url` 发给用户扫码
+4. `xianyu_check_session(user_id)`
+5. `xianyu_search(keyword="泡泡玛特", user_id=user_id, rows=50)`
+6. 按 `items[].exposure_score` 在本地重排
+7. 取第 2 个商品的 `detail_url`
+8. `xianyu_publish(user_id=user_id, item_url=detail_url)`
+
+这里最容易犯的错有三个：
+- 忘记给 `login`、`check_session`、`publish` 传 `user_id`
+- 误以为 MCP 能直接按曝光度排序
+- 把发布结果误判为“已经正式上架”

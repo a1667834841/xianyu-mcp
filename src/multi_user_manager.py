@@ -56,6 +56,23 @@ class MultiUserManager:
     def _entry_by_user_id(self, user_id: str) -> UserRegistryEntry:
         return self.registry.get_user(user_id)
 
+    def _is_keepalive_running(self, user_id: str) -> bool:
+        runtime = self._runtimes.get(user_id)
+        if runtime is not None and hasattr(runtime.app, "background_tasks_running"):
+            return runtime.app.background_tasks_running()
+        return self._runtime_state.get(user_id, {}).get("keepalive_running", False)
+
+    def _record_keepalive_success(
+        self, user_id: str, last_updated_at: str | None
+    ) -> None:
+        self._runtime_state[user_id]["last_keepalive_at"] = last_updated_at
+        self._runtime_state[user_id]["last_keepalive_status"] = "ok"
+        self._runtime_state[user_id]["last_error"] = None
+
+    def _record_keepalive_error(self, user_id: str, message: str) -> None:
+        self._runtime_state[user_id]["last_keepalive_status"] = "error"
+        self._runtime_state[user_id]["last_error"] = message
+
     def _ensure_runtime_state(self, entry: UserRegistryEntry) -> dict[str, Any]:
         return self._runtime_state.setdefault(
             entry.user_id,
@@ -81,7 +98,6 @@ class MultiUserManager:
             user_id=entry.user_id,
             token_file=entry.token_file,
             chrome_user_data_dir=entry.chrome_user_data_dir,
-            # Assumes token_file is at .../user_id/tokens/token.json, so parents[2] is the data root
             data_root=entry.token_file.parents[2],
         )
         browser = AsyncChromeManager(
@@ -90,7 +106,16 @@ class MultiUserManager:
             auto_start=False,
             settings=settings,
         )
-        app = XianyuApp(browser=browser, settings=settings)
+        app = XianyuApp(
+            browser=browser,
+            settings=settings,
+            keepalive_on_cookie_saved=lambda ts, _uid=user_id: (
+                self._record_keepalive_success(_uid, ts)
+            ),
+            keepalive_on_error=lambda msg, _uid=user_id: self._record_keepalive_error(
+                _uid, msg
+            ),
+        )
         runtime = UserRuntime(entry=entry, app=app)
         self._runtimes[user_id] = runtime
         state["browser_connected"] = True
@@ -108,7 +133,7 @@ class MultiUserManager:
             "cdp_host": entry.cdp_host,
             "cdp_port": entry.cdp_port,
             "browser_connected": state.get("browser_connected", False),
-            "keepalive_running": state.get("keepalive_running", False),
+            "keepalive_running": self._is_keepalive_running(user_id),
             "cookie_present": state.get("cookie_present", False),
             "cookie_valid": state.get("cookie_valid", False),
             "last_cookie_updated_at": state.get("last_cookie_updated_at"),
@@ -254,3 +279,27 @@ class MultiUserManager:
         except Exception as e:
             raise RuntimeError(f"refresh_token_failed: {e}") from e
         return {"user_id": user_id, "success": bool(result), **(result or {})}
+
+    async def ensure_initialized(self) -> None:
+        for entry in self.registry.list_users():
+            try:
+                runtime = await self._get_or_create_runtime(entry.user_id)
+                session_status = await runtime.app.check_session()
+                is_valid = session_status.get("valid", False)
+                status = "ready" if is_valid else "pending_login"
+                self._runtime_state[entry.user_id]["cookie_valid"] = is_valid
+                self._runtime_state[entry.user_id]["cookie_present"] = True
+                self._runtime_state[entry.user_id]["last_cookie_updated_at"] = (
+                    session_status.get("last_updated_at")
+                )
+                self._runtime_state[entry.user_id]["status"] = status
+                updated_entry = replace(entry, status=status)
+                self.registry.update_user(updated_entry)
+                if is_valid:
+                    await self.start_keepalive(entry.user_id)
+                else:
+                    await self.stop_keepalive(entry.user_id)
+            except Exception as e:
+                self._runtime_state[entry.user_id]["last_error"] = str(e)
+                self._runtime_state[entry.user_id]["cookie_present"] = False
+                self._runtime_state[entry.user_id]["keepalive_running"] = False
