@@ -1,13 +1,13 @@
 services:
   # 浏览器服务
   browser:
-    image: ${XIANYU_BROWSER_IMAGE:-xianyu-browser:local}
+    image: ${XIANYU_BROWSER_IMAGE:-registry.cn-hangzhou.aliyuncs.com/ggball/chrome-headless-shell-zh:multi}
     build:
       context: .
       dockerfile: docker/browser.Dockerfile
     restart: unless-stopped
     environment:
-      - BROWSER_POOL_SIZE=${BROWSER_POOL_SIZE:-1}
+      - BROWSER_POOL_SIZE=${BROWSER_POOL_SIZE:-2}
       - BROWSER_CDP_START_PORT=${BROWSER_CDP_START_PORT:-9222}
       - BROWSER_PROFILE_ROOT=/data/browser-pool
       - CHROME_BIN=${CHROME_BIN:-/headless-shell/headless-shell}
@@ -19,6 +19,7 @@ services:
       - ${XIANYU_HOST_DATA_DIR:-./data}/browser-pool:/data/browser-pool
     ports:
       - "${BROWSER_PORT_1:-9222}:9222"
+      - "${BROWSER_PORT_2:-9223}:9223"
     shm_size: 2g
     networks:
       - xianyu-net
@@ -35,7 +36,7 @@ services:
     environment:
       - CDP_HOST=${CDP_HOST:-browser}
       - CDP_PORT=${CDP_PORT:-9222}
-      - BROWSER_POOL_SIZE=${BROWSER_POOL_SIZE:-1}
+      - BROWSER_POOL_SIZE=${BROWSER_POOL_SIZE:-2}
       - BROWSER_CDP_START_PORT=${BROWSER_CDP_START_PORT:-9222}
       - BROWSER_PROFILE_ROOT=/data/browser-pool
       - MCP_HOST=${MCP_HOST:-0.0.0.0}
@@ -54,6 +55,8 @@ services:
     volumes:
       - ${XIANYU_HOST_DATA_DIR:-./data}/users:/data/users
       - ${XIANYU_HOST_DATA_DIR:-./data}/registry:/data/registry
+      - ./mcp_server:/app/mcp_server
+      - ./src:/app/src
     healthcheck:
       test: ["CMD-SHELL", "curl -f -s --max-time 3 http://localhost:8080/sse | head -1 | grep -q 'event: endpoint' || exit 1"]
       interval: 30s

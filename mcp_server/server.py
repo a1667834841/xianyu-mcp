@@ -87,6 +87,18 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
+            name="xianyu_get_detail",
+            description="获取商品详情",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "user_id": {"type": "string"},
+                    "item_url": {"type": "string"},
+                },
+                "required": ["user_id", "item_url"],
+            },
+        ),
+        types.Tool(
             name="xianyu_refresh_token",
             description="刷新 token",
             inputSchema={
@@ -153,6 +165,11 @@ async def call_tool(name: str, arguments: dict) -> types.CallToolResult:
                 new_price=arguments.get("new_price"),
                 new_description=arguments.get("new_description"),
                 condition=arguments.get("condition", "全新"),
+            )
+        elif name == "xianyu_get_detail":
+            payload = await manager.get_detail(
+                arguments["user_id"],
+                arguments["item_url"],
             )
         elif name == "xianyu_refresh_token":
             payload = await manager.refresh_token(arguments["user_id"])

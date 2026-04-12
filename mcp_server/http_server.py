@@ -55,6 +55,22 @@ mcp = FastMCP(
 
 
 @mcp.tool()
+async def xianyu_create_user(display_name: str | None = None) -> str:
+    entry = get_manager().create_user(display_name)
+    return json.dumps(
+        {
+            "success": True,
+            "user_id": entry.user_id,
+            "display_name": entry.display_name,
+            "slot_id": entry.slot_id,
+            "cdp_port": entry.cdp_port,
+            "status": entry.status,
+        },
+        ensure_ascii=False,
+    )
+
+
+@mcp.tool()
 async def xianyu_login(user_id: str | None = None) -> str:
     manager = get_manager()
     if user_id is None:
@@ -121,6 +137,18 @@ async def xianyu_publish(
         new_description=new_description,
         condition=condition,
     )
+    return json.dumps(result, ensure_ascii=False)
+
+
+@mcp.tool()
+async def xianyu_get_detail(user_id: str, item_url: str) -> str:
+    """获取商品详情。根据商品链接获取标题、描述、价格、分类、图片等信息。
+
+    参数：
+    - user_id: 用户ID（必填）
+    - item_url: 商品链接，如 https://www.goofish.com/item?id=123456789
+    """
+    result = await get_manager().get_detail(user_id=user_id, item_url=item_url)
     return json.dumps(result, ensure_ascii=False)
 
 

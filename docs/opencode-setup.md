@@ -47,13 +47,14 @@ touch opencode.json
 
 ## 安装 Skills
 
-项目已包含闲鱼 Skills 文件，无需额外安装：
+项目已包含闲鱼 Skills 文件：
 
 ```
+skills/xianyu-skill/SKILL.md
 .claude/skills/xianyu-skill/SKILL.md
 ```
 
-OpenCode 会自动发现并加载 Skills。
+OpenCode 会自动发现并加载 `skills/` 目录下的 Skills。
 
 ### Skills 存放位置
 
@@ -61,10 +62,10 @@ OpenCode 支持以下 Skills 存放路径（项目级）：
 
 | 路径 | 说明 |
 |------|------|
-| `.opencode/skills/<name>/SKILL.md` | OpenCode 原生格式 |
+| `skills/<name>/SKILL.md` | OpenCode 原生格式（推荐） |
 | `.claude/skills/<name>/SKILL.md` | Claude Code 兼容格式 |
 
-本项目已使用 `.claude/skills/xianyu-skill/SKILL.md`，OpenCode 可自动识别。
+本项目 Skills 同时存在于两个位置，确保两种客户端都能识别。
 
 ## 验证安装
 

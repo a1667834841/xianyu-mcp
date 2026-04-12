@@ -255,6 +255,44 @@ class MultiUserManager:
 
         return {"user_id": user_id, "slot_id": runtime.entry.slot_id, **result}
 
+    async def get_detail(self, user_id: str, item_url: str) -> dict[str, Any]:
+        if user_id is None:
+            raise TypeError("get_detail() missing required argument: 'user_id'")
+        entry = self._entry_by_user_id(user_id)
+        if not entry.enabled:
+            raise RuntimeError("user_disabled")
+        if entry.status != "ready":
+            raise RuntimeError("user_not_logged_in")
+
+        runtime = await self._get_or_create_runtime(user_id)
+        async with self.operation_lock:
+            self._runtime_state[user_id]["busy"] = True
+            try:
+                item = await runtime.app.get_detail(item_url)
+            finally:
+                self._runtime_state[user_id]["busy"] = False
+
+        if item is None:
+            return {"success": False, "user_id": user_id, "error": "获取详情失败"}
+
+        return {
+            "success": True,
+            "user_id": user_id,
+            "slot_id": runtime.entry.slot_id,
+            "item_id": item.item_id,
+            "title": item.title,
+            "description": item.description if item.description else "",
+            "category": item.category,
+            "category_id": item.category_id,
+            "brand": item.brand,
+            "model": item.model,
+            "min_price": item.min_price,
+            "max_price": item.max_price,
+            "image_urls": item.image_urls if item.image_urls else [],
+            "seller_city": item.seller_city,
+            "is_free_ship": item.is_free_ship,
+        }
+
     async def start_keepalive(self, user_id: str) -> None:
         if self._runtime_state.get(user_id, {}).get("keepalive_running"):
             return
