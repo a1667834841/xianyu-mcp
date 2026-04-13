@@ -16,7 +16,7 @@ def build_chrome_commands(
                 f"--user-data-dir={profile_dir}",
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
-                "--remote-debugging-address=0.0.0.0",
+                "--remote-debugging-address=::1",
                 f"--remote-debugging-port={start_port + index}",
                 "about:blank",
             ]
