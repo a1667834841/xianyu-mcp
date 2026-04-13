@@ -191,7 +191,7 @@ curl --max-time 60 -X POST http://127.0.0.1:8080/rest/login -H "Content-Type: ap
 本次实际返回示例：
 
 ```json
-{"success":true,"logged_in":false,"qr_code":{"url":"https://passport.goofish.com/qrcodeCheck.htm?lgToken=...","public_url":"https://img.ggball.top/xianyu/qr-....png"},"message":"请扫码登录。扫码后浏览器会自动跳转，然后请调用 check_session 确认登录状态"}
+{"success":true,"logged_in":false,"qr_code":{"public_url":"https://img.ggball.top/xianyu/qr-....png"},"message":"请扫码登录。扫码后浏览器会自动跳转，然后请调用 check_session 确认登录状态"}
 ```
 
 判定规则：

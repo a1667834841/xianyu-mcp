@@ -72,7 +72,7 @@ class FakeMultiUserManager:
             "selected_by": "auto" if user_id is None else "explicit",
             "logged_in": False,
             "qr_code": {
-                "url": "https://passport.goofish.com/qrcodeCheck.htm?lgToken=test"
+                "public_url": "https://passport.goofish.com/qrcodeCheck.htm?lgToken=test"
             },
             "message": "请扫码登录",
         }

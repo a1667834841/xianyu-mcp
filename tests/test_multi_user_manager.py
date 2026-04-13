@@ -223,7 +223,7 @@ async def test_debug_login_returns_selected_user_metadata(tmp_path):
             "success": True,
             "logged_in": False,
             "qr_code": {
-                "url": "https://passport.goofish.com/qrcodeCheck.htm?lgToken=test"
+                "public_url": "https://passport.goofish.com/qrcodeCheck.htm?lgToken=test"
             },
             "message": "请扫码登录",
         }
@@ -235,7 +235,7 @@ async def test_debug_login_returns_selected_user_metadata(tmp_path):
     assert result["user_id"] == entry.user_id
     assert result["slot_id"] == entry.slot_id
     assert result["selected_by"] == "explicit"
-    assert result["qr_code"]["url"].startswith("https://passport.goofish.com/")
+    assert result["qr_code"]["public_url"].startswith("https://passport.goofish.com/")
 
 
 def test_resolve_login_user_raises_when_all_users_are_ready(tmp_path):

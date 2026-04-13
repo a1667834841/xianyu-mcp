@@ -1,6 +1,7 @@
 """
 测试 session 模块 - 登录、Token 刷新、Cookie 检查
 """
+
 import asyncio
 from src.session import SessionManager, login, refresh_token, check_cookie_valid
 
@@ -54,12 +55,17 @@ async def test_login():
         print("需要扫码登录...")
         result = await session.login(timeout=120)
 
-        if result.get('success'):
-            if result.get('token'):
+        if result.get("success"):
+            if result.get("token"):
                 print(f"登录成功！Token: {result.get('token', '')[:20]}...")
-            elif result.get('qr_code'):
+            elif result.get("qr_code"):
                 print("已获取二维码，等待扫码...")
-                print(f"  QR URL: {result['qr_code']['url'][:50]}...")
+                qr_code = result["qr_code"]
+                qr_url = qr_code.get("public_url")
+                if qr_url:
+                    print(f"  QR URL: {qr_url[:50]}...")
+                else:
+                    print("  二维码不可直接展示")
             return True
 
 

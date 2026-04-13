@@ -44,27 +44,22 @@ opencode mcp list
 
 ## 安装 Skills
 
-OpenCode Skills 通过 `SKILL.md` 文件定义，自动从以下路径发现：
+OpenCode Skills 通过 `SKILL.md` 文件定义。对 OpenCode 而言，可直接发现的路径如下：
 
 | 路径 | 说明 |
 |------|------|
-| `.opencode/skills/<name>/SKILL.md` | 项目级（推荐） |
-| `.claude/skills/<name>/SKILL.md` | Claude Code 兼容 |
-| `.agents/skills/<name>/SKILL.md` | Agents 兼容 |
+| `.opencode/skills/<name>/SKILL.md` | 项目级 |
+| `~/.config/opencode/skills/<name>/SKILL.md` | 全局 |
 
-本项目已包含以下 Skills：
+本项目当前维护的 Skills 源文件位于：
 
 ```
-.opencode/skills/
-├── xianyu-skill/SKILL.md
-└── xianyu-hot-product-analysis/SKILL.md
-
 .claude/skills/
 ├── xianyu-skill/SKILL.md
 └── xianyu-hot-product-analysis/SKILL.md
 ```
 
-克隆项目后 Skills 自动可用，无需额外配置。
+仓库内维护源位于 `.claude/skills/`。如需在 OpenCode 中使用，需要将对应技能目录额外复制或安装到 OpenCode 的 skill 目录，例如 `~/.config/opencode/skills/`。
 
 ### SKILL.md 格式
 
@@ -92,7 +87,7 @@ opencode mcp list
 
 ### 检查 Skills
 
-Skills 通过 `skill` 工具按需加载。OpenCode 会自动显示可用技能列表。
+Skills 通过 `skill` 工具按需加载。OpenCode 会自动显示其已安装 skill 目录中的可用技能列表。
 
 ## 使用示例
 
