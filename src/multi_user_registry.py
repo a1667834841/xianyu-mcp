@@ -39,12 +39,22 @@ class MultiUserRegistry:
             UserRegistryEntry(
                 **{
                     **item,
-                    "chrome_user_data_dir": Path(item["chrome_user_data_dir"]),
+                    "cdp_host": self.pool_settings.cdp_host,
+                    "cdp_port": self.pool_settings.start_port
+                    + self._slot_index(item["slot_id"])
+                    - 1,
+                    "chrome_user_data_dir": self.pool_settings.profile_root
+                    / item["slot_id"]
+                    / "profile",
                     "token_file": Path(item["token_file"]),
                 }
             )
             for item in raw
         ]
+
+    @staticmethod
+    def _slot_index(slot_id: str) -> int:
+        return int(slot_id.split("-", 1)[1])
 
     def _save(self, entries: list[UserRegistryEntry]) -> None:
         payload = []
@@ -69,10 +79,11 @@ class MultiUserRegistry:
     def create_user(self, display_name: str | None) -> UserRegistryEntry:
         entries = self._load()
         used_slots = {entry.slot_id for entry in entries}
+        effective_size = 1
         slot_index = next(
             (
                 idx
-                for idx in range(1, self.pool_settings.size + 1)
+                for idx in range(1, effective_size + 1)
                 if f"slot-{idx}" not in used_slots
             ),
             None,
