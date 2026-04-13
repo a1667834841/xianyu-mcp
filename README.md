@@ -73,10 +73,6 @@ xianyu-mcp/
 │   ├── mcp-e2e-regression.md    # 端到端回归手册
 │   └── mcp-dev-cheatsheet.md    # MCP 调试手册
 │
-├── .opencode/skills/            # OpenCode Skills
-│   ├── xianyu-skill/SKILL.md
-│   └── xianyu-hot-product-analysis/SKILL.md
-│
 ├── .claude/skills/              # Claude Code Skills
 │   ├── xianyu-skill/SKILL.md
 │   └── xianyu-hot-product-analysis/SKILL.md
@@ -125,7 +121,7 @@ xianyu-mcp/
 | Claude Code 接入 | [docs/claude-code-setup.md](docs/claude-code-setup.md) |
 | Skills 安装 | [docs/skills-setup.md](docs/skills-setup.md) |
 | Docker 部署详解 | [docker/README.md](docker/README.md) |
-| Skills 技能定义 | [.opencode/skills/xianyu-skill/SKILL.md](.opencode/skills/xianyu-skill/SKILL.md) |
+| Skills 技能定义 | [.claude/skills/xianyu-skill/SKILL.md](.claude/skills/xianyu-skill/SKILL.md) |
 | 端到端回归 | [docs/mcp-e2e-regression.md](docs/mcp-e2e-regression.md) |
 | MCP Dev CLI | [docs/mcp-dev-cheatsheet.md](docs/mcp-dev-cheatsheet.md) |
 

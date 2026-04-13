@@ -12,12 +12,6 @@ Skills 是一个包含 `SKILL.md` 文件的目录，用于：
 ## 目录结构
 
 ```
-.opencode/skills/                   # OpenCode 项目级 Skills
-├── xianyu-skill/
-│   └── SKILL.md                    # 闲鱼操作技能
-└── xianyu-hot-product-analysis/
-    └── SKILL.md                    # 热门商品分析技能
-
 .claude/skills/                     # Claude Code 兼容 Skills
 ├── xianyu-skill/
 │   └── SKILL.md
@@ -27,7 +21,7 @@ Skills 是一个包含 `SKILL.md` 文件的目录，用于：
 
 ## Skills 发现路径
 
-OpenCode 自动扫描以下路径：
+各客户端的常见 Skills 发现路径如下：
 
 | 客户端 | 项目级路径 | 全局路径 |
 |--------|-----------|---------|
@@ -35,7 +29,9 @@ OpenCode 自动扫描以下路径：
 | Claude Code | `.claude/skills/<name>/SKILL.md` | `~/.claude/skills/<name>/SKILL.md` |
 | Agents 兼容 | `.agents/skills/<name>/SKILL.md` | `~/.agents/skills/<name>/SKILL.md` |
 
-克隆项目后 Skills 自动可用，无需额外配置。
+本仓库当前维护的 Skills 源文件位于 `.claude/skills/`。
+
+Claude Code 可直接使用该目录；OpenCode 如需使用，需要将对应技能目录复制到自己的 OpenCode skill 目录（如 `~/.config/opencode/skills/`）。
 
 ## SKILL.md 格式要求
 
@@ -85,7 +81,7 @@ description: Use when managing one or more Xianyu accounts via MCP
 
 ### OpenCode
 
-OpenCode 会自动显示可用技能列表，通过 `skill` 工具按需加载。
+OpenCode 会自动显示其自身 skill 目录中已安装的技能列表，并通过 `skill` 工具按需加载。
 
 ### Claude Code
 
@@ -103,7 +99,7 @@ Claude Code 会在需要时自动调用 Skills。可通过自然语言验证：
 
 ```bash
 # 复制到 OpenCode 全局目录
-cp -r .opencode/skills/xianyu-skill ~/.config/opencode/skills/
+cp -r .claude/skills/xianyu-skill ~/.config/opencode/skills/
 
 # 或复制到 Claude Code 全局目录
 cp -r .claude/skills/xianyu-skill ~/.claude/skills/

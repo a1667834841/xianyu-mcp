@@ -75,7 +75,6 @@ claude mcp add-json --scope user '{"mcpServers": {"xianyu": {"url": "http://127.
 项目已包含闲鱼 Skills 文件：
 
 ```
-skills/xianyu-skill/SKILL.md
 .claude/skills/xianyu-skill/SKILL.md
 ```
 
@@ -90,7 +89,7 @@ Claude Code 支持以下 Skills 存放路径：
 | `.claude/skills/<name>/SKILL.md` | 项目级（推荐） |
 | `~/.claude/skills/<name>/SKILL.md` | 全局 |
 
-本项目 Skills 同时存在于两个位置，确保 OpenCode 和 Claude Code 都能识别。
+本项目当前维护的 Skills 定义位于 `.claude/skills/`。
 
 ## 验证安装
 

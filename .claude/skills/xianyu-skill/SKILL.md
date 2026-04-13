@@ -122,15 +122,17 @@ description: Use when managing one or more Xianyu accounts via MCP, especially w
 - 未登录：返回 `logged_in: false` 和 `qr_code`
 
 **二维码字段：**
-- `public_url`: 最适合直接发给用户扫码
-- `text`: 原始登录链接
+- `public_url`: 唯一应直接发给用户扫码的地址；仅当该字段非空时才可视为可直接展示
+- `url`: 内部跳转地址，不是稳定的用户侧契约，不要直接发给用户
+- `text`: 原始登录链接文本，不要替代 `public_url` 作为展示地址
 
 **标准流程：**
 1. `xianyu_list_users`
 2. 不存在目标用户就 `xianyu_create_user`
 3. `xianyu_login(user_id)`
-4. 把 `qr_code.public_url` 发给用户扫码
-5. 用户扫码后调用 `xianyu_check_session(user_id)` 确认成功
+4. 仅在 `qr_code.public_url` 非空时，把它发给用户扫码
+5. 若 `qr_code.public_url` 为空，明确告知当前结果不可直接展示，并引导用户稍后重试或重新发起登录
+6. 用户扫码后调用 `xianyu_check_session(user_id)` 确认成功
 
 ### `xianyu_check_session`
 
@@ -258,8 +260,9 @@ description: Use when managing one or more Xianyu accounts via MCP, especially w
 
 1. `xianyu_create_user(display_name?)`
 2. `xianyu_login(user_id)`
-3. 把 `qr_code.public_url` 发给用户
-4. 用户扫码后执行 `xianyu_check_session(user_id)`
+3. 仅在 `qr_code.public_url` 非空时，把它发给用户扫码
+4. 若 `qr_code.public_url` 为空，先排查当前登录结果为何不可直接展示，不要退回改发 `qr_code.url`
+5. 用户扫码后执行 `xianyu_check_session(user_id)`
 
 ### 指定用户搜索并按曝光度重排
 
@@ -304,12 +307,13 @@ description: Use when managing one or more Xianyu accounts via MCP, especially w
 
 1. `xianyu_create_user`
 2. `xianyu_login(user_id)`
-3. 把 `qr_code.public_url` 发给用户扫码
-4. `xianyu_check_session(user_id)`
-5. `xianyu_search(keyword="泡泡玛特", user_id=user_id, rows=50)`
-6. 按 `items[].exposure_score` 在本地重排
-7. 取第 2 个商品的 `detail_url`
-8. `xianyu_publish(user_id=user_id, item_url=detail_url)`
+3. 仅在 `qr_code.public_url` 非空时，把它发给用户扫码
+4. 若 `qr_code.public_url` 为空，先排查当前登录结果为何不可直接展示，不要退回改发 `qr_code.url`
+5. `xianyu_check_session(user_id)`
+6. `xianyu_search(keyword="泡泡玛特", user_id=user_id, rows=50)`
+7. 按 `items[].exposure_score` 在本地重排
+8. 取第 2 个商品的 `detail_url`
+9. `xianyu_publish(user_id=user_id, item_url=detail_url)`
 
 这里最容易犯的错有三个：
 - 忘记给 `login`、`check_session`、`publish` 传 `user_id`
