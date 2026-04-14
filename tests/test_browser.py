@@ -72,6 +72,17 @@ class FakePlaywright:
         self.stopped = True
 
 
+class OpenPortFakeSocket:
+    def settimeout(self, timeout):
+        self.timeout = timeout
+
+    def connect_ex(self, address):
+        return 0
+
+    def close(self):
+        return None
+
+
 class TestBrowser:
     """浏览器管理测试"""
 
@@ -311,6 +322,67 @@ class TestBrowser:
 
         assert ws_url == "ws://localhost:9222/devtools/browser/test-id"
 
+    def test_start_chrome_fails_when_port_is_occupied_without_debug_endpoint(
+        self, tmp_path, monkeypatch
+    ):
+        """B13 - 端口被占用但 CDP 端点不可用时不应误报启动成功"""
+        manager = AsyncChromeManager(user_data_dir=tmp_path, auto_start=False)
+        manager.chrome_path = "/fake/chrome"
+
+        class FakeProcess:
+            def poll(self):
+                return None
+
+        current_time = {"value": 0.0}
+
+        def fake_time():
+            return current_time["value"]
+
+        def fake_sleep(seconds):
+            current_time["value"] += seconds
+
+        monkeypatch.setattr("os.path.exists", lambda path: True)
+        monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: FakeProcess())
+        monkeypatch.setattr(
+            "socket.socket", lambda *args, **kwargs: OpenPortFakeSocket()
+        )
+        monkeypatch.setattr("time.time", fake_time)
+        monkeypatch.setattr("time.sleep", fake_sleep)
+
+        assert manager.start_chrome(timeout=1) is False
+
+    def test_start_chrome_adds_no_sandbox_when_running_as_root(
+        self, tmp_path, monkeypatch
+    ):
+        """B14 - root 用户启动本地 Chrome 时追加 --no-sandbox"""
+        manager = AsyncChromeManager(user_data_dir=tmp_path, auto_start=False)
+        manager.chrome_path = "/fake/chrome"
+        captured = {}
+
+        class FakeProcess:
+            def poll(self):
+                return None
+
+        monkeypatch.setattr("os.path.exists", lambda path: True)
+        monkeypatch.setattr("os.geteuid", lambda: 0)
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            return FakeProcess()
+
+        monkeypatch.setattr("subprocess.Popen", fake_popen)
+        monkeypatch.setattr(
+            "socket.socket", lambda *args, **kwargs: OpenPortFakeSocket()
+        )
+        monkeypatch.setattr(
+            AsyncChromeManager,
+            "_debug_endpoint_ready",
+            lambda self, host: True,
+        )
+
+        assert manager.start_chrome(timeout=1) is True
+        assert "--no-sandbox" in captured["cmd"]
+
 
 class OverviewFakePage:
     def __init__(self, title_text: str, url: str, *, fail_title: bool = False):
@@ -420,3 +492,50 @@ async def test_get_browser_overview_raises_when_browser_not_ready(tmp_path):
 
     with pytest.raises(RuntimeError, match="浏览器未连接，无法获取概览"):
         await manager.get_browser_overview()
+
+
+class DebugFakePage:
+    def __init__(self, title_text, url, screenshot_bytes=b"img"):
+        self._title_text = title_text
+        self.url = url
+        self._screenshot_bytes = screenshot_bytes
+        self.screenshot_calls = []
+
+    async def title(self):
+        return self._title_text
+
+    async def screenshot(self, *, type, full_page):
+        self.screenshot_calls.append({"type": type, "full_page": full_page})
+        return self._screenshot_bytes
+
+
+@pytest.mark.asyncio
+async def test_pick_debug_page_prefers_session_then_publish_then_work(tmp_path):
+    manager = AsyncChromeManager(user_data_dir=tmp_path, auto_start=False)
+    session_page = DebugFakePage("登录", "https://www.goofish.com/session")
+    publish_page = DebugFakePage("发布", "https://www.goofish.com/publish")
+    work_page = DebugFakePage("首页", "https://www.goofish.com/")
+    manager.context = type(
+        "Context", (), {"pages": [work_page, publish_page, session_page]}
+    )()
+    manager._session_page = session_page
+    manager._publish_page = publish_page
+    manager._work_page = work_page
+
+    kind, page = await manager.pick_debug_page()
+
+    assert kind == "session"
+    assert page is session_page
+
+
+@pytest.mark.asyncio
+async def test_capture_debug_screenshot_returns_binary_payload(tmp_path):
+    manager = AsyncChromeManager(user_data_dir=tmp_path, auto_start=False)
+    page = DebugFakePage(
+        "发布", "https://www.goofish.com/publish", screenshot_bytes=b"png"
+    )
+
+    image_bytes = await manager.capture_page_screenshot(page, full_page=True)
+
+    assert image_bytes == b"png"
+    assert page.screenshot_calls == [{"type": "png", "full_page": True}]

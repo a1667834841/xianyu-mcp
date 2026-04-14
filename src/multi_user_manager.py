@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from .browser import AsyncChromeManager
+from .browser_debugger import BrowserDebugger
 from .browser_pool import BrowserPoolSettings
 from .core import XianyuApp
 from .multi_user_registry import MultiUserRegistry, UserRegistryEntry
@@ -117,6 +118,19 @@ class MultiUserManager:
                 }
             )
         return {"users": users}
+
+    async def debug_snapshot(
+        self, user_id: str | None = None, full_page: bool = True
+    ) -> dict[str, Any]:
+        entry, selected_by = self.resolve_debug_user(user_id)
+        runtime = await self._get_or_create_runtime(entry.user_id)
+        debugger = BrowserDebugger(runtime.app.browser)
+        return await debugger.capture_snapshot(
+            user_id=entry.user_id,
+            slot_id=entry.slot_id,
+            selected_by=selected_by,
+            full_page=full_page,
+        )
 
     def _is_keepalive_running(self, user_id: str) -> bool:
         runtime = self._runtimes.get(user_id)

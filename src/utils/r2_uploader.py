@@ -77,6 +77,48 @@ class R2Uploader:
             print(f"[R2] 上传异常: {e}")
             return None
 
+    def upload_image_bytes(
+        self,
+        image_data: bytes,
+        content_type: str = "image/png",
+        key_prefix: str = "xianyu",
+        custom_filename: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        上传图片到 R2（支持自定义路径前缀和文件名）
+
+        Args:
+            image_data: 图片二进制数据
+            content_type: MIME 类型
+            key_prefix: 路径前缀
+            custom_filename: 自定义文件名（不含扩展名）
+
+        Returns:
+            公网访问 URL，失败返回 None
+        """
+        if not key_prefix:
+            key_prefix = "xianyu"
+        if custom_filename is None:
+            custom_filename = str(uuid.uuid4())
+
+        filename = f"{key_prefix}/{custom_filename}.png"
+        try:
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=filename,
+                Body=image_data,
+                ContentType=content_type,
+            )
+            public_url = f"{self.public_domain}/{filename}"
+            print(f"[R2] 上传成功: {public_url}")
+            return public_url
+        except ClientError as e:
+            print(f"[R2] 上传失败: {e}")
+            return None
+        except Exception as e:
+            print(f"[R2] 上传异常: {e}")
+            return None
+
 
 _global_uploader: Optional[R2Uploader] = None
 
@@ -130,7 +172,39 @@ def upload_qr_code(image_data: bytes, token: str) -> Optional[str]:
     if uploader is None:
         return None
 
-    return uploader.upload_image(
+    return uploader.upload_image_bytes(
         image_data=image_data,
+        content_type="image/png",
+        key_prefix="xianyu/qr",
         custom_filename=f"qr-{token[:16]}",
+    )
+
+
+def upload_image_bytes(
+    image_data: bytes,
+    content_type: str = "image/png",
+    key_prefix: str = "xianyu",
+    custom_filename: str | None = None,
+) -> Optional[str]:
+    """
+    上传图片到 R2（模块级便捷函数）
+
+    Args:
+        image_data: 图片二进制数据
+        content_type: MIME 类型
+        key_prefix: 路径前缀
+        custom_filename: 自定义文件名（不含扩展名）
+
+    Returns:
+        公网访问 URL，失败返回 None
+    """
+    uploader = get_uploader()
+    if uploader is None:
+        return None
+
+    return uploader.upload_image_bytes(
+        image_data=image_data,
+        content_type=content_type,
+        key_prefix=key_prefix,
+        custom_filename=custom_filename,
     )
