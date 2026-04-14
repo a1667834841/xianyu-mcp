@@ -173,6 +173,15 @@ async def xianyu_browser_overview(user_id: str | None = None) -> str:
     return json.dumps(response, ensure_ascii=False)
 
 
+@mcp.tool()
+async def xianyu_debug_snapshot(
+    user_id: str | None = None,
+    full_page: bool = True,
+) -> str:
+    payload = await get_manager().debug_snapshot(user_id=user_id, full_page=full_page)
+    return json.dumps(payload, ensure_ascii=False)
+
+
 async def rest_login(request):
     try:
         data = await request.json() if request.method == "POST" else {}

@@ -8,6 +8,7 @@ import subprocess
 import time
 import asyncio
 import json
+import urllib.request
 from pathlib import Path
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from typing import Optional, List, Dict
@@ -248,6 +249,9 @@ class AsyncChromeManager:
             "--disable-dev-shm-usage",
         ]
 
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            cmd.append("--no-sandbox")
+
         if self.headless:
             cmd.append("--headless=new")
 
@@ -270,7 +274,7 @@ class AsyncChromeManager:
                     sock.settimeout(1)
                     result = sock.connect_ex(("localhost", self.port))
                     sock.close()
-                    if result == 0:
+                    if result == 0 and self._debug_endpoint_ready("localhost"):
                         print(f"[Browser] Chrome 已启动在端口 {self.port}")
                         return True
                 except:
@@ -282,6 +286,18 @@ class AsyncChromeManager:
 
         except Exception as e:
             print(f"[Browser] 启动 Chrome 失败：{e}")
+            return False
+
+    def _debug_endpoint_ready(self, host: str) -> bool:
+        try:
+            req = urllib.request.Request(
+                f"http://{host}:{self.port}/json/version",
+                headers={"Host": "localhost"},
+            )
+            with urllib.request.urlopen(req, timeout=1) as response:
+                data = json.loads(response.read().decode())
+            return bool(data.get("webSocketDebuggerUrl"))
+        except Exception:
             return False
 
     async def connect(self) -> bool:
@@ -529,6 +545,44 @@ class AsyncChromeManager:
 
             self._publish_page = await self.context.new_page()
         return self._publish_page
+
+    def _page_is_available(self, page: Optional[Page]) -> bool:
+        """检查页面是否仍然可用（页面不为 None、在 context.pages 中、未关闭）。"""
+        if page is None:
+            return False
+        if self.context is None:
+            return False
+        return page in self.context.pages
+
+    async def pick_debug_page(self) -> tuple[str, Page]:
+        """按优先级选择一个最适合调试的页面，返回 (kind, page) 元组。"""
+        if self._session_page and self._page_is_available(self._session_page):
+            return ("session", self._session_page)
+        if self._publish_page and self._page_is_available(self._publish_page):
+            return ("publish", self._publish_page)
+        if self._work_page and self._page_is_available(self._work_page):
+            return ("work", self._work_page)
+        if self.context and self.context.pages:
+            return ("context", self.context.pages[-1])
+        raise RuntimeError("无可用的浏览器调试页面")
+
+    async def get_page_snapshot_metadata(self, page: Page) -> dict[str, str]:
+        """获取页面元数据，返回 {"url": ..., "title": ...}。"""
+        title = ""
+        try:
+            title = await page.title()
+        except Exception:
+            title = ""
+        return {
+            "url": getattr(page, "url", "") or "",
+            "title": title,
+        }
+
+    async def capture_page_screenshot(
+        self, page: Page, full_page: bool = True
+    ) -> bytes:
+        """对给定页面执行截图，返回二进制内容。"""
+        return await page.screenshot(type="png", full_page=full_page)
 
     async def get_browser_overview(self) -> Dict:
         """返回当前浏览器 context 和页面概览。"""

@@ -125,6 +125,18 @@ async def list_tools() -> list[types.Tool]:
                 "required": [],
             },
         ),
+        types.Tool(
+            name="xianyu_debug_snapshot",
+            description="抓取当前浏览器调试快照",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "user_id": {"type": "string"},
+                    "full_page": {"type": "boolean", "default": True},
+                },
+                "required": [],
+            },
+        ),
     ]
 
 
@@ -180,6 +192,11 @@ async def call_tool(name: str, arguments: dict) -> types.CallToolResult:
                 "success": True,
                 **(await manager.debug_browser_overview(arguments.get("user_id"))),
             }
+        elif name == "xianyu_debug_snapshot":
+            payload = await manager.debug_snapshot(
+                user_id=arguments.get("user_id"),
+                full_page=arguments.get("full_page", True),
+            )
         else:
             return types.CallToolResult(
                 content=[types.TextContent(type="text", text=f"未知工具：{name}")],

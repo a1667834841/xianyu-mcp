@@ -257,3 +257,45 @@ def test_create_user_rejects_second_browser_user(tmp_path):
 
     with pytest.raises(RuntimeError, match="no_available_browser_slot"):
         manager.create_user()
+
+
+@pytest.mark.asyncio
+async def test_debug_snapshot_returns_selected_user_metadata(tmp_path, monkeypatch):
+    manager = make_manager(tmp_path)
+    entry = manager.create_user()
+    manager.registry.update_user(replace(entry, status="ready"))
+
+    runtime = await manager._get_or_create_runtime(entry.user_id)
+
+    class FakeDebugger:
+        def __init__(self, browser):
+            self.browser = browser
+
+        async def capture_snapshot(self, **kwargs):
+            return {
+                "success": True,
+                "user_id": kwargs["user_id"],
+                "slot_id": kwargs["slot_id"],
+                "selected_by": kwargs["selected_by"],
+                "captured_at": "2026-04-13T12:34:56Z",
+                "page": {
+                    "url": "https://www.goofish.com/session",
+                    "title": "闲鱼",
+                    "kind": "session",
+                },
+                "screenshot": {
+                    "uploaded": True,
+                    "public_url": "https://img.example.com/xianyu/debug/debug-user-001.png",
+                },
+                "recent_errors": [],
+                "recent_failed_requests": [],
+            }
+
+    monkeypatch.setattr("src.multi_user_manager.BrowserDebugger", FakeDebugger)
+
+    result = await manager.debug_snapshot(user_id=entry.user_id)
+
+    assert result["user_id"] == entry.user_id
+    assert result["slot_id"] == entry.slot_id
+    assert result["selected_by"] == "explicit"
+    assert result["screenshot"]["uploaded"] is True

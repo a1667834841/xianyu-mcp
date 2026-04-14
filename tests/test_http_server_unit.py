@@ -403,3 +403,48 @@ async def test_stdio_call_tool_routes_create_user_through_manager(monkeypatch):
 
     assert payload["success"] is True
     assert payload["user_id"] == "user-new"
+
+
+@pytest.mark.asyncio
+async def test_xianyu_debug_snapshot_returns_manager_payload(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    class FakeManager:
+        async def debug_snapshot(self, user_id=None, full_page=True):
+            return {
+                "success": True,
+                "user_id": user_id or "user-001",
+                "slot_id": "slot-1",
+                "selected_by": "auto" if user_id is None else "explicit",
+                "captured_at": "2026-04-13T12:34:56Z",
+                "page": {
+                    "url": "https://www.goofish.com/session",
+                    "title": "闲鱼",
+                    "kind": "session",
+                },
+                "screenshot": {
+                    "uploaded": True,
+                    "public_url": "https://img.example.com/xianyu/debug/debug-user-001.png",
+                },
+                "recent_errors": [],
+                "recent_failed_requests": [],
+            }
+
+    monkeypatch.setattr(http_server, "get_manager", lambda: FakeManager())
+
+    payload = json.loads(await http_server.xianyu_debug_snapshot())
+
+    assert payload["success"] is True
+    assert payload["screenshot"]["uploaded"] is True
+
+
+@pytest.mark.asyncio
+async def test_stdio_list_tools_includes_debug_snapshot(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.server as stdio_server
+
+    tools = await stdio_server.list_tools()
+    tool_names = [tool.name for tool in tools]
+
+    assert "xianyu_debug_snapshot" in tool_names
