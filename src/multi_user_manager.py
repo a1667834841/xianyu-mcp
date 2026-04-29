@@ -109,14 +109,24 @@ class MultiUserManager:
             }
         users = []
         for runtime in self._runtimes.values():
-            overview = await runtime.app.browser_overview()
-            users.append(
-                {
-                    "user_id": runtime.entry.user_id,
-                    "slot_id": runtime.entry.slot_id,
-                    **overview,
-                }
-            )
+            try:
+                overview = await runtime.app.browser_overview()
+                users.append(
+                    {
+                        "user_id": runtime.entry.user_id,
+                        "slot_id": runtime.entry.slot_id,
+                        **overview,
+                    }
+                )
+            except RuntimeError as exc:
+                users.append(
+                    {
+                        "user_id": runtime.entry.user_id,
+                        "slot_id": runtime.entry.slot_id,
+                        "success": False,
+                        "message": str(exc),
+                    }
+                )
         return {"users": users}
 
     async def debug_snapshot(
@@ -253,6 +263,23 @@ class MultiUserManager:
             "pages_fetched": outcome.pages_fetched,
         }
 
+    async def suggest_keywords(self, input_words: str = "x") -> dict[str, Any]:
+        selected_user_id = self.pick_search_user_id()
+        runtime = await self._get_or_create_runtime(selected_user_id)
+        async with self.operation_lock:
+            self._runtime_state[selected_user_id]["busy"] = True
+            try:
+                result = await runtime.app.suggest_keywords(input_words=input_words)
+            finally:
+                self._runtime_state[selected_user_id]["busy"] = False
+
+        return {
+            "success": True,
+            "user_id": selected_user_id,
+            "slot_id": runtime.entry.slot_id,
+            **result,
+        }
+
     async def publish(self, user_id: str, item_url: str, **options) -> dict[str, Any]:
         if user_id is None:
             raise TypeError("publish() missing required argument: 'user_id'")
@@ -305,6 +332,7 @@ class MultiUserManager:
             "model": item.model,
             "min_price": item.min_price,
             "max_price": item.max_price,
+            "sku_list": [sku.__dict__ for sku in item.sku_list],
             "image_urls": item.image_urls if item.image_urls else [],
             "seller_city": item.seller_city,
             "is_free_ship": item.is_free_ship,

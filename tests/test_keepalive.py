@@ -302,7 +302,7 @@ async def test_app_start_background_tasks_idempotent_and_respects_settings(
 
     class FakeKeepalive:
         def __init__(
-            self, browser, session, interval_minutes: int, page_coordinator=None
+            self, browser, session, interval_minutes: int, page_coordinator=None, **kwargs
         ):
             self.browser = browser
             self.session = session
@@ -378,7 +378,7 @@ async def test_app_aexit_stops_background_tasks_before_closing_browser(
 
     class FakeKeepalive:
         def __init__(
-            self, browser, session, interval_minutes: int, page_coordinator=None
+            self, browser, session, interval_minutes: int, page_coordinator=None, **kwargs
         ):
             self.browser = browser
             self.session = session
@@ -451,7 +451,7 @@ def test_app_builds_one_shared_page_coordinator(tmp_path):
             self.page_coordinator = page_coordinator
 
     class FakeKeepalive:
-        def __init__(self, browser, session, interval_minutes, page_coordinator=None):
+        def __init__(self, browser, session, interval_minutes, page_coordinator=None, **kwargs):
             self.browser = browser
             self.session = session
             self.interval_minutes = interval_minutes

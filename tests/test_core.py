@@ -3,13 +3,22 @@
 """
 
 import asyncio
+import os
 import sys
 from pathlib import Path
+
+import pytest
 
 project_root = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(project_root))
 
 from src.core import XianyuApp, _ItemCopierImpl, SearchItem
+
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("XIANYU_RUN_LIVE_TESTS") != "1",
+    reason="live Xianyu browser tests require XIANYU_RUN_LIVE_TESTS=1",
+)
 
 
 async def test_search_no_duplicates():

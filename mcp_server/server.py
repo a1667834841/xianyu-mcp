@@ -72,6 +72,17 @@ async def list_tools() -> list[types.Tool]:
             },
         ),
         types.Tool(
+            name="xianyu_suggest_keywords",
+            description="获取闲鱼搜索联想/热点关键词，自动使用一个可用账号",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "input_words": {"type": "string", "default": "x"},
+                },
+                "required": [],
+            },
+        ),
+        types.Tool(
             name="xianyu_publish",
             description="复制发布商品",
             inputSchema={
@@ -79,8 +90,10 @@ async def list_tools() -> list[types.Tool]:
                 "properties": {
                     "user_id": {"type": "string"},
                     "item_url": {"type": "string"},
-                    "new_price": {"type": "number"},
-                    "new_description": {"type": "string"},
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "price": {"type": "number"},
+                    "original_price": {"type": "number"},
                     "condition": {"type": "string", "default": "全新"},
                 },
                 "required": ["user_id", "item_url"],
@@ -170,12 +183,18 @@ async def call_tool(name: str, arguments: dict) -> types.CallToolResult:
                 sort_field=arguments.get("sort_field", ""),
                 sort_order=arguments.get("sort_order", ""),
             )
+        elif name == "xianyu_suggest_keywords":
+            payload = await manager.suggest_keywords(
+                input_words=arguments.get("input_words", "x")
+            )
         elif name == "xianyu_publish":
             payload = await manager.publish(
                 arguments["user_id"],
                 arguments["item_url"],
-                new_price=arguments.get("new_price"),
-                new_description=arguments.get("new_description"),
+                new_title=arguments.get("title"),
+                new_description=arguments.get("description"),
+                new_price=arguments.get("price"),
+                original_price=arguments.get("original_price"),
                 condition=arguments.get("condition", "全新"),
             )
         elif name == "xianyu_get_detail":

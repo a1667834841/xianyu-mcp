@@ -79,7 +79,7 @@ class MultiUserRegistry:
     def create_user(self, display_name: str | None) -> UserRegistryEntry:
         entries = self._load()
         used_slots = {entry.slot_id for entry in entries}
-        effective_size = 1
+        effective_size = max(1, self.pool_settings.size)
         slot_index = next(
             (
                 idx

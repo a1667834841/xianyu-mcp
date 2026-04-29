@@ -10,6 +10,7 @@ import json
 
 from src.http_search import (
     HttpApiSearchClient,
+    HttpSuggestClient,
     HttpApiSearchError,
     HttpApiResult,
     _extract_want_cnt,
@@ -146,6 +147,61 @@ class TestHttpApiSearchClientRequest:
 
         assert data["sortField"] == "pub_time"
         assert data["sortValue"] == "DESC"
+
+
+class TestHttpSuggestClient:
+    def test_build_request_data_uses_pc_home_defaults(self):
+        client = HttpSuggestClient()
+
+        data = client._build_request_data("x")
+
+        assert data == {
+            "inputWords": "x",
+            "searchReqFromPage": "xyPcHome",
+            "bucketId": 30,
+            "type": 0,
+        }
+
+    def test_parse_response_extracts_unique_keywords(self):
+        client = HttpSuggestClient()
+        response = {
+            "ret": ["SUCCESS::调用成功"],
+            "data": {
+                "result": [
+                    {"keyword": "显卡"},
+                    {"showText": "显示器"},
+                    {"keyword": "显卡"},
+                ]
+            },
+        }
+
+        keywords = client._parse_response(response)
+
+        assert keywords == ["显卡", "显示器"]
+
+    def test_parse_response_extracts_suggest_items(self):
+        client = HttpSuggestClient()
+        response = {
+            "ret": ["SUCCESS::调用成功"],
+            "data": {
+                "items": [
+                    {"suggest": "醒图svip一天"},
+                    {"suggest": "星巴克代点"},
+                ]
+            },
+        }
+
+        keywords = client._parse_response(response)
+
+        assert keywords == ["醒图svip一天", "星巴克代点"]
+
+    def test_parse_response_raises_on_illegal_sign(self):
+        client = HttpSuggestClient()
+
+        with pytest.raises(HttpApiSearchError) as exc_info:
+            client._parse_response({"ret": ["FAIL_SYS_ILLEGAL_SIGN::非法请求签名"]})
+
+        assert "ILLEGAL_SIGN" in str(exc_info.value)
 
 
 class TestHttpApiSearchClientResponse:

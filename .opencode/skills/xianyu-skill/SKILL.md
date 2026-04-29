@@ -25,31 +25,34 @@ description: Use when managing one or more Xianyu accounts via MCP, especially w
 
 ## Core Rules
 
-1. **先选用户，再做操作。**
+1. **必须使用 MCP 工具函数调用，禁止使用 bash 命令。**
+   调用闲鱼 MCP 工具时，使用 `xianyu_xianyu_*` 函数（如 `xianyu_xianyu_list_users`），而不是 `./scripts/mcp-dev call` 等 bash 命令。MCP 工具函数是原生调用方式，返回结构化数据，更高效可靠。
+
+2. **先选用户，再做操作。**
    除 `xianyu_list_users` 和 `xianyu_browser_overview` 外，大多数账号相关操作都应明确知道目标 `user_id`。
 
-2. **多用户场景下不要省略 `user_id`。**
+3. **多用户场景下不要省略 `user_id`。**
    `xianyu_search` 虽然允许省略 `user_id`，但这只适合“任意可用账号都行”的场景。当前 MCP 会在所有 `ready` 用户里挑一个可用用户；如果没有就绪用户，会报 `no_available_user`。只要用户指定了账号，或你需要稳定复现结果，就显式传 `user_id`。
 
-3. **搜索接口不能按曝光度排序。**
+4. **搜索接口不能按曝光度排序。**
    `sort_field` 只支持 `pub_time` 和 `price`。`exposure_score` 是返回字段，不是可直接传给 MCP 的排序参数。用户要“按曝光度排行”时，先搜索，再按 `exposure_score` 在结果里二次排序。
 
-4. **发布成功不等于一定已正式上架。**
+5. **发布成功不等于一定已正式上架。**
    `xianyu_publish` 的本质是复制并填充发布表单。特殊类目（如潮玩盲盒）可能保存为草稿；`success: true` 更应理解为“采集和填充流程成功”。
 
 ## Quick Reference
 
-| 工具 | 用途 | 关键参数 | 何时优先用 |
-| --- | --- | --- | --- |
-| `xianyu_list_users` | 查看全部用户和状态 | 无 | 用户问“当前有哪些账号” |
-| `xianyu_create_user` | 创建新用户 | `display_name?` | 需要新增账号 |
-| `xianyu_get_user_status` | 查看单个用户详情 | `user_id` | 需要确认某个账号是否就绪 |
-| `xianyu_login` | 对指定用户发起登录 | `user_id` | 登录入口首选 |
-| `xianyu_check_session` | 检查某用户登录态 | `user_id` | 搜索/发布前核验状态 |
-| `xianyu_refresh_token` | 刷新某用户 token | `user_id` | token 过期或用户明确要求刷新 |
-| `xianyu_search` | 搜索商品 | `keyword`, `user_id?` | 查商品、做选品 |
-| `xianyu_publish` | 复制发布商品 | `user_id`, `item_url` | 根据对标链接填充发布表单 |
-| `xianyu_browser_overview` | 浏览器排障 | 无 | 页面卡住、空白、上下文异常 |
+| MCP 函数 | 工具 | 用途 | 关键参数 | 何时优先用 |
+| --- | --- | --- | --- | --- |
+| `xianyu_xianyu_list_users` | `xianyu_list_users` | 查看全部用户和状态 | 无 | 用户问当前有哪些账号 |
+| `xianyu_xianyu_create_user` | `xianyu_create_user` | 创建新用户 | `display_name?` | 需要新增账号 |
+| `xianyu_xianyu_get_user_status` | `xianyu_get_user_status` | 查看单个用户详情 | `user_id` | 需要确认某个账号是否就绪 |
+| `xianyu_xianyu_login` | `xianyu_login` | 对指定用户发起登录 | `user_id` | 登录入口首选 |
+| `xianyu_xianyu_check_session` | `xianyu_check_session` | 检查某用户登录态 | `user_id` | 搜索发布前核验状态 |
+| `xianyu_xianyu_refresh_token` | `xianyu_refresh_token` | 刷新某用户 token | `user_id` | token 过期或用户明确要求刷新 |
+| `xianyu_xianyu_search` | `xianyu_search` | 搜索商品 | `keyword`, `user_id?` | 查商品做选品 |
+| `xianyu_xianyu_publish` | `xianyu_publish` | 复制发布商品 | `user_id`, `item_url` | 根据对标链接填充发布表单 |
+| `xianyu_xianyu_browser_overview` | `xianyu_browser_overview` | 浏览器排障 | 无 | 页面卡住空白上下文异常 |
 
 ## Tool Guide
 
@@ -112,7 +115,7 @@ description: Use when managing one or more Xianyu accounts via MCP, especially w
 
 ### `xianyu_login`
 
-对指定用户发起登录。它是默认登录入口，不要先假设系统存在“当前默认用户”。
+对指定用户发起登录。它是默认登录入口，不要先假设系统存在"当前默认用户"。
 
 **必须参数：**
 - `user_id`
@@ -122,7 +125,7 @@ description: Use when managing one or more Xianyu accounts via MCP, especially w
 - 未登录：返回 `logged_in: false` 和 `qr_code`
 
 **二维码字段（重要）：**
-返回的 `qr_code` 包含多个字段，但只有 `public_url` 是可以正确访问并应直接发给用户扫码的 URL；仅当该字段非空时才可视为可直接展示。`url` 是内部跳转地址，不是稳定的用户侧契约；`text` 是原始登录链接文本，不要替代 `public_url` 作为展示地址。
+返回的 `qr_code` 包含多个字段，但只有 `public_url` 是可以正确访问的 URL。`url` 字段可能无法直接访问。
 
 **返回结构示例：**
 ```python
@@ -143,9 +146,8 @@ description: Use when managing one or more Xianyu accounts via MCP, especially w
 1. `xianyu_list_users`
 2. 不存在目标用户就 `xianyu_create_user`
 3. `xianyu_login(user_id)`
-4. 仅在 `qr_code.public_url` 非空时，把它发给用户扫码
-5. 若 `qr_code.public_url` 为空，明确告知当前结果不可直接展示，并引导用户稍后重试或重新发起登录
-6. 用户扫码后调用 `xianyu_check_session(user_id)` 确认成功
+4. **只把 `qr_code.public_url` 发给用户扫码**
+5. 用户扫码后调用 `xianyu_check_session(user_id)` 确认成功
 
 ### `xianyu_check_session`
 
@@ -273,8 +275,8 @@ description: Use when managing one or more Xianyu accounts via MCP, especially w
 
 1. `xianyu_create_user(display_name?)`
 2. `xianyu_login(user_id)`
-3. 仅在 `qr_code.public_url` 非空时，把它发给用户扫码
-4. 若 `qr_code.public_url` 为空，先排查当前登录结果为何不可直接展示，不要退回改发 `qr_code.url`
+3. **验证 `qr_code.public_url` 不为空**
+4. 把 `qr_code.public_url` 发给用户扫码
 5. 用户扫码后执行 `xianyu_check_session(user_id)`
 
 ### 指定用户搜索并按曝光度重排
@@ -302,6 +304,7 @@ description: Use when managing one or more Xianyu accounts via MCP, especially w
 
 | 错误 | 正确做法 |
 | --- | --- |
+| 使用 `./scripts/mcp-dev call` 等 bash 命令调用 MCP | 使用 `xianyu_xianyu_*` MCP 工具函数（原生调用，更高效） |
 | 把 `xianyu_check_session` 当成无参数工具 | 多用户场景必须传 `user_id` |
 | 忽略 `xianyu_refresh_token(user_id)` 的 `user_id` | 指定用户刷新 token，必要时再复查 session |
 | 以为搜索可以直接按曝光度排序 | 先搜索，再按 `exposure_score` 二次排序 |
@@ -321,8 +324,8 @@ description: Use when managing one or more Xianyu accounts via MCP, especially w
 
 1. `xianyu_create_user`
 2. `xianyu_login(user_id)`
-3. 仅在 `qr_code.public_url` 非空时，把它发给用户扫码
-4. 若 `qr_code.public_url` 为空，先排查当前登录结果为何不可直接展示，不要退回改发 `qr_code.url`
+3. **验证 `qr_code.public_url` 不为空**
+4. 把 `qr_code.public_url` 发给用户扫码
 5. `xianyu_check_session(user_id)`
 6. `xianyu_search(keyword="泡泡玛特", user_id=user_id, rows=50)`
 7. 按 `items[].exposure_score` 在本地重排
@@ -333,3 +336,4 @@ description: Use when managing one or more Xianyu accounts via MCP, especially w
 - 忘记给 `login`、`check_session`、`publish` 传 `user_id`
 - 误以为 MCP 能直接按曝光度排序
 - 把发布结果误判为“已经正式上架”
+- 没有验证 `public_url` 是否为空就发给用户

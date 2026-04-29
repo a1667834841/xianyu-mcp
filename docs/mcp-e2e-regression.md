@@ -70,6 +70,29 @@
 
 ## 重新编译镜像步骤
 
+### 部署前检查
+
+如果代码是在 git worktree 或临时分支里实现的，先确认 Docker Compose 的构建目录和运行时挂载目录是否就是当前要部署的工作区。
+
+当前 `docker-compose.yml` 的关键点：
+
+- `mcp-server.build.context` 是仓库根目录 `.`
+- 运行时会挂载 `./mcp_server:/app/mcp_server`
+- 运行时会挂载 `./src:/app/src`
+
+因此，如果你在 `.worktrees/<branch>` 里完成实现，但在仓库主目录执行 `docker compose build` 或 `docker compose up`，主目录必须已经包含本次改动。否则会出现“worktree 测试通过，但容器仍跑旧代码”的情况。
+
+部署前建议执行：
+
+```bash
+git status --short
+git diff -- mcp_server src tests docs
+```
+
+确认本次要部署的改动已经出现在当前 compose 构建目录中。
+
+### 标准构建
+
 在仓库根目录执行：
 
 ```bash
@@ -80,6 +103,34 @@ docker compose build mcp-server
 
 - 构建结束时出现 `mcp-server  Built`
 - 没有出现依赖安装失败、Dockerfile 语法错误、上下文缺失等错误
+
+### 基础镜像不可用时
+
+当前 `docker-compose.yml` 默认基础镜像参数为：
+
+```text
+XIANYU_MCP_BASE_IMAGE=registry.cn-hangzhou.aliyuncs.com/ggball/xianyu-mcp-base:latest
+```
+
+如果构建时报错类似：
+
+```text
+registry.cn-hangzhou.aliyuncs.com/ggball/xianyu-mcp-base:latest: not found
+```
+
+不要盲目改 Dockerfile。先确认本机已有基础镜像：
+
+```bash
+docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | grep xianyu-mcp-base
+```
+
+如果本机已有 `xianyu-mcp-base:latest`，可临时覆盖构建参数：
+
+```bash
+XIANYU_MCP_BASE_IMAGE=xianyu-mcp-base:latest docker compose build mcp-server
+```
+
+这类问题的根因是 compose 默认指向远端 registry tag，而本机实际可用的是本地 tag。构建通过后仍要继续执行重启和业务验证，不能只看 build 成功。
 
 ## 重启与旧容器处理
 
@@ -295,6 +346,79 @@ MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_search --us
 - 基础回归阶段：验证工具调用链是否打通
 - 真实发布成功与否：受登录态、页面结构、图片上传、闲鱼风控等外部因素影响，需要单独按场景验证
 
+### 发布参数改动的真实验证流程
+
+当改动涉及 `xianyu_publish` 入参、表单填写、标题、描述、价格或图片上传时，不能只依赖单元测试和 `success=true`。必须做一次真实发布并回查详情。
+
+推荐流程：
+
+1. 确认服务健康
+
+```bash
+docker compose ps
+```
+
+要求 `xianyu-mcp-server-1` 进入 `(healthy)`。
+
+2. 确认发布账号登录态
+
+```bash
+./scripts/mcp-dev call xianyu_list_users
+./scripts/mcp-dev call xianyu_check_session --user-id user-001
+```
+
+只有 `valid=true` 时才继续发布验证。
+
+3. 搜索一个对标商品
+
+```bash
+./scripts/mcp-dev call xianyu_search --user-id user-001 --keyword 键盘 --rows 1
+```
+
+记录返回的 `detail_url`。
+
+4. 用唯一测试标题和描述发布
+
+```bash
+./scripts/mcp-dev call xianyu_publish \
+  --user-id user-001 \
+  --item-url 'https://www.goofish.com/item?id=<source_item_id>' \
+  --title '测试勿拍标题验证三' \
+  --description '这是第三次验证 description 参数，请勿拍。' \
+  --price 97 \
+  --original-price 197 \
+  --condition '全新'
+```
+
+记录返回的 `item_id`、`success`、`error`、`final_title`、`publish_state`。
+
+5. 回查新商品详情
+
+```bash
+./scripts/mcp-dev call xianyu_get_detail \
+  --user-id user-001 \
+  --item-url 'https://www.goofish.com/item?id=<new_item_id>'
+```
+
+验收标准：
+
+- `success=true`
+- `title` 等于或以传入的 `--title` 为准
+- `description` 包含传入的 `--description`
+- 如果发布逻辑会追加规格价格，确认追加内容没有覆盖自定义描述
+
+注意：测试发布会真实产生商品。验证完成后，应在闲鱼后台下架或删除带有“测试勿拍”的商品。
+
+### 标题字段的特殊注意事项
+
+真实发布页可能没有独立的标题输入框，标题可能由描述首行生成。因此修改标题逻辑时必须同时验证：
+
+- `xianyu_publish` 返回的 `final_title`
+- 新商品详情接口回查到的 `title`
+- 新商品详情接口回查到的 `description`
+
+仅看到发布接口返回 `success=true` 不代表标题参数已生效。
+
 ## 结果判定标准
 
 ### 通过
@@ -380,7 +504,29 @@ docker compose logs --tail 100 mcp-server
 - 日志中的启动信息是否与当前版本一致
 - 是否仍在运行旧容器而没有被 recreate
 
-### 4. `/rest/check_session` 冷启动慢
+### 4. worktree 改动未进入 compose 构建目录
+
+典型现象：
+
+- 在 `.worktrees/<branch>` 中测试通过
+- 主目录 `docker compose build` 和 `docker compose up` 成功
+- 真实服务行为仍然像旧版本
+
+根因：
+
+- compose 构建上下文是当前仓库根目录 `.`
+- `mcp-server` 运行时还会挂载主目录的 `./mcp_server` 和 `./src`
+- worktree 中的改动不会自动进入主目录
+
+处理方法：
+
+```bash
+git diff -- mcp_server src tests docs
+```
+
+确认当前执行 compose 的目录包含本次改动。必要时先把已验证改动同步回主工作区，再构建重启。
+
+### 5. `/rest/check_session` 冷启动慢
 
 典型现象：
 

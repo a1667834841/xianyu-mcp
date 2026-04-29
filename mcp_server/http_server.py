@@ -123,18 +123,28 @@ async def xianyu_search(
 
 
 @mcp.tool()
+async def xianyu_suggest_keywords(input_words: str = "x") -> str:
+    result = await get_manager().suggest_keywords(input_words=input_words)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
 async def xianyu_publish(
     user_id: str,
     item_url: str,
-    new_price: float | None = None,
-    new_description: str | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    price: float | None = None,
+    original_price: float | None = None,
     condition: str = "全新",
 ) -> str:
     result = await get_manager().publish(
         user_id=user_id,
         item_url=item_url,
-        new_price=new_price,
-        new_description=new_description,
+        new_title=title,
+        new_description=description,
+        new_price=price,
+        original_price=original_price,
         condition=condition,
     )
     return json.dumps(result, ensure_ascii=False)

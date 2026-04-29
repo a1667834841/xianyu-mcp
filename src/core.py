@@ -8,7 +8,7 @@ import json
 import time
 import base64
 from typing import Callable, Optional, List, Dict, Any
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 import logging
 from urllib.parse import parse_qs, urlparse
 
@@ -17,14 +17,14 @@ try:
     from .session import SessionManager
     from .settings import AppSettings, load_settings
     from .keepalive import CookieKeepaliveService
-    from .http_search import HttpApiSearchClient
+    from .http_search import HttpApiSearchClient, HttpSuggestClient
     from .page_coordinator import PageCoordinator
 except ImportError:
     from browser import AsyncChromeManager
     from session import SessionManager
     from settings import AppSettings, load_settings
     from keepalive import CookieKeepaliveService
-    from http_search import HttpApiSearchClient
+    from http_search import HttpApiSearchClient, HttpSuggestClient
     from page_coordinator import PageCoordinator
 
 
@@ -66,6 +66,17 @@ class SearchParams:
 
 
 @dataclass
+class CopiedSku:
+    """复制商品的规格价格。"""
+
+    sku_id: str
+    price: float
+    quantity: Optional[int]
+    props: List[Dict[str, str]]
+    image_url: Optional[str] = None
+
+
+@dataclass
 class CopiedItem:
     """复制的商品数据"""
 
@@ -82,6 +93,7 @@ class CopiedItem:
     seller_city: str
     is_free_ship: bool
     raw_data: Dict[str, Any]
+    sku_list: List[CopiedSku] = field(default_factory=list)
 
 
 @dataclass
@@ -330,6 +342,26 @@ class XianyuApp:
             finally:
                 await client.aclose()
 
+    async def suggest_keywords(self, input_words: str = "x") -> Dict[str, Any]:
+        """获取闲鱼搜索联想/热点关键词。"""
+
+        async def get_cookie():
+            cached = self.session.load_cached_cookie()
+            if cached:
+                return cached
+            if await self.browser.ensure_running():
+                full_cookie = await self.browser.get_full_cookie_string()
+                if full_cookie:
+                    self.session.save_cookie(full_cookie)
+                    return full_cookie
+            return None
+
+        client = HttpSuggestClient(get_cookie)
+        try:
+            return await client.suggest(input_words)
+        finally:
+            await client.aclose()
+
     # ==================== 发布功能 ====================
 
     async def publish(self, item_url: str, **options) -> Dict[str, Any]:
@@ -378,6 +410,8 @@ class XianyuApp:
 
 class _ItemCopierImpl:
     """商品复制发布器（内部实现）"""
+
+    DEFAULT_PRICE_MARKUP_RATE = 0.30
 
     def __init__(self, chrome_manager: AsyncChromeManager, publish_page):
         self.chrome_manager = chrome_manager
@@ -478,8 +512,15 @@ class _ItemCopierImpl:
                     brand = label.get("text")
                     break
 
-        min_price = float(item_do.get("minPrice", 0))
-        max_price = float(item_do.get("maxPrice", min_price))
+        sku_list = self._parse_sku_list(item_do.get("skuList", []))
+        sku_prices = [sku.price for sku in sku_list if sku.price > 0]
+
+        min_price = self._parse_float(item_do.get("minPrice"), 0)
+        max_price = self._parse_float(item_do.get("maxPrice"), min_price)
+        if min_price <= 0 and sku_prices:
+            min_price = min(sku_prices)
+        if max_price <= 0 and sku_prices:
+            max_price = max(sku_prices)
 
         image_infos = item_do.get("imageInfos", [])
         image_urls = [img.get("url", "") for img in image_infos if img.get("url")]
@@ -507,7 +548,110 @@ class _ItemCopierImpl:
             seller_city=seller_city,
             is_free_ship=is_free_ship,
             raw_data=self.captured_data,
+            sku_list=sku_list,
         )
+
+    @staticmethod
+    def _parse_float(value: Any, default: float = 0) -> float:
+        try:
+            if value is None or value == "":
+                return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @classmethod
+    def _parse_sku_price(cls, sku: Dict[str, Any]) -> float:
+        raw_price = sku.get("priceInCent")
+        if raw_price is None:
+            raw_price = sku.get("price")
+        price_in_cent = cls._parse_float(raw_price, 0)
+        return round(price_in_cent / 100, 2) if price_in_cent > 0 else 0
+
+    @classmethod
+    def _parse_sku_list(cls, raw_skus: Any) -> List[CopiedSku]:
+        if not isinstance(raw_skus, list):
+            return []
+
+        sku_list: List[CopiedSku] = []
+        for raw_sku in raw_skus:
+            if not isinstance(raw_sku, dict):
+                continue
+
+            props: List[Dict[str, str]] = []
+            for prop in raw_sku.get("propertyList", []) or []:
+                if not isinstance(prop, dict):
+                    continue
+                name = str(prop.get("propertyText") or "").strip()
+                value = str(
+                    prop.get("actualValueText") or prop.get("valueText") or ""
+                ).strip()
+                if name and value:
+                    props.append({"name": name, "value": value})
+
+            image_url = None
+            property_image = raw_sku.get("propertyImage")
+            if isinstance(property_image, dict):
+                image_url = property_image.get("url")
+
+            sku_list.append(
+                CopiedSku(
+                    sku_id=str(raw_sku.get("skuId") or ""),
+                    price=cls._parse_sku_price(raw_sku),
+                    quantity=raw_sku.get("quantity"),
+                    props=props,
+                    image_url=image_url,
+                )
+            )
+
+        return sku_list
+
+    @classmethod
+    def _marked_up_price(cls, price: float) -> float:
+        return round(price * (1 + cls.DEFAULT_PRICE_MARKUP_RATE), 2)
+
+    @staticmethod
+    def _format_price(price: float) -> str:
+        return f"{price:.2f}元"
+
+    @classmethod
+    def build_publish_description(
+        cls, item_data: CopiedItem, base_description: Optional[str] = None
+    ) -> str:
+        description = (
+            base_description if base_description is not None else item_data.description
+        )
+        sku_list = [sku for sku in item_data.sku_list if sku.price > 0 and sku.props]
+        if not sku_list:
+            return description
+
+        dimensions: Dict[str, List[str]] = {}
+        for sku in sku_list:
+            for prop in sku.props:
+                values = dimensions.setdefault(prop["name"], [])
+                if prop["value"] not in values:
+                    values.append(prop["value"])
+
+        marked_prices = {cls._marked_up_price(sku.price) for sku in sku_list}
+        lines = ["【规格价格】"]
+        if len(marked_prices) == 1 and len(dimensions) > 1:
+            price = next(iter(marked_prices))
+            lines.append(f"统一价格：{cls._format_price(price)}")
+            lines.append("")
+            for name, values in dimensions.items():
+                lines.append(f"可选{name}：")
+                lines.append("、".join(values))
+        else:
+            for index, sku in enumerate(sku_list[:30], start=1):
+                spec_name = " / ".join(prop["value"] for prop in sku.props)
+                price = cls._marked_up_price(sku.price)
+                lines.append(f"{index}. {spec_name}：{cls._format_price(price)}")
+            if len(sku_list) > 30:
+                lines.append("更多规格请私聊确认。")
+
+        lines.append("")
+        lines.append("以上价格已按原商品规格价上浮30%，下单前请确认需要的规格，拍下后备注规格。")
+        return f"{description}\n\n" + "\n".join(lines)
 
     async def publish_from_item(
         self,
@@ -568,16 +712,18 @@ class _ItemCopierImpl:
 
         print("[ItemCopier] 步骤 5: 填充标题...")
         title_to_use = new_title or item_data.title
-        await self._fill_title(title_to_use)
+        title_filled = await self._fill_title(title_to_use)
         await asyncio.sleep(0.5)
 
         print("[ItemCopier] 步骤 6: 填充描述...")
-        desc_to_use = new_description or item_data.description
+        desc_to_use = self.build_publish_description(item_data, new_description)
+        if not title_filled and title_to_use:
+            desc_to_use = f"{title_to_use}\n\n{desc_to_use}"
         await self._fill_description(desc_to_use)
         await asyncio.sleep(0.5)
 
         print("[ItemCopier] 步骤 7: 填充价格...")
-        price_to_use = new_price or item_data.min_price
+        price_to_use = new_price or self._marked_up_price(item_data.min_price)
         if original_price is None:
             original_price = price_to_use * 1.5
         await self._fill_price(price_to_use, original_price)
@@ -703,6 +849,10 @@ class _ItemCopierImpl:
             title_input = page.locator('input[placeholder*="标题"]').first
             if not await title_input.is_visible(timeout=3000):
                 title_input = page.locator('textarea[placeholder*="标题"]').first
+            if not await title_input.is_visible(timeout=3000):
+                title_input = page.locator(
+                    '[contenteditable="true"][placeholder*="标题"]'
+                ).first
             if not await title_input.is_visible(timeout=3000):
                 return False
 

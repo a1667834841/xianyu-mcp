@@ -30,7 +30,7 @@ async def test_build_runtime_uses_registry_entry_paths(tmp_path, monkeypatch):
     created = {}
 
     class FakeApp:
-        def __init__(self, browser, settings):
+        def __init__(self, browser, settings, **kwargs):
             created["browser"] = browser
             created["settings"] = settings
 
@@ -54,7 +54,7 @@ async def test_build_runtime_restores_state_for_existing_registry_user(
     entry = first_manager.create_user()
 
     class FakeApp:
-        def __init__(self, browser, settings):
+        def __init__(self, browser, settings, **kwargs):
             self.browser = browser
             self.settings = settings
 

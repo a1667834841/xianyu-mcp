@@ -30,6 +30,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+      args:
+        XIANYU_MCP_BASE_IMAGE: ${XIANYU_MCP_BASE_IMAGE:-registry.cn-hangzhou.aliyuncs.com/ggball/xianyu-mcp-base:latest}
     restart: unless-stopped
     network_mode: service:browser
     environment:

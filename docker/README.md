@@ -9,9 +9,16 @@
 适合本地开发、调试 Dockerfile 或需要基于当前代码重新构建镜像的场景。
 
 ```bash
+docker build -f docker/mcp-base.Dockerfile -t xianyu-mcp-base:latest .
 docker compose build mcp-server
 docker compose up -d
 docker compose ps
+```
+
+如果本地构建使用本地基础镜像，可显式覆盖：
+
+```bash
+XIANYU_MCP_BASE_IMAGE=xianyu-mcp-base:latest docker compose build mcp-server
 ```
 
 ### 方式二：远程镜像部署
@@ -19,6 +26,8 @@ docker compose ps
 适合服务器直接拉取已发布镜像进行部署。
 
 默认镜像：`registry.cn-hangzhou.aliyuncs.com/ggball/xianyu-mcp:latest`
+
+默认 MCP 基础镜像：`registry.cn-hangzhou.aliyuncs.com/ggball/xianyu-mcp-base:latest`
 
 ```bash
 docker login --username=ggball0227 registry.cn-hangzhou.aliyuncs.com
@@ -45,6 +54,7 @@ docker compose ps
 | `MCP_PORT` | MCP Server 监听端口 | `8080` |
 | `XIANYU_HOST_DATA_DIR` | 宿主机数据目录 | `./data` |
 | `XIANYU_USER_ID` | 当前用户目录名 | `default` |
+| `XIANYU_MCP_BASE_IMAGE` | MCP 构建使用的基础镜像 | `registry.cn-hangzhou.aliyuncs.com/ggball/xianyu-mcp-base:latest` |
 
 ### 浏览器池环境变量
 
@@ -68,6 +78,21 @@ docker compose ps
 - Cookie 快照：`${XIANYU_HOST_DATA_DIR}/users/${XIANYU_USER_ID}/tokens/token.json`
 
 ## 阿里云 ACR 发布镜像
+
+当 apt 依赖或 `requirements.txt` 变化时，先构建并推送 MCP 基础镜像：
+
+```bash
+# 登录阿里云 ACR
+docker login --username=ggball0227 registry.cn-hangzhou.aliyuncs.com
+
+# 构建基础镜像
+docker build -f docker/mcp-base.Dockerfile -t registry.cn-hangzhou.aliyuncs.com/ggball/xianyu-mcp-base:latest .
+
+# 推送基础镜像
+docker push registry.cn-hangzhou.aliyuncs.com/ggball/xianyu-mcp-base:latest
+```
+
+应用代码变化时，只需要构建并推送 MCP 应用镜像：
 
 ```bash
 # 登录阿里云 ACR

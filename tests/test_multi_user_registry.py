@@ -31,7 +31,7 @@ def test_pool_settings_preserves_configured_size(monkeypatch, tmp_path):
     assert settings.start_port == 9222
 
 
-def test_create_user_raises_when_second_browser_user_is_requested(tmp_path):
+def test_create_user_raises_when_browser_pool_is_full(tmp_path):
     pool = BrowserPoolSettings(
         size=3,
         cdp_host="browser",
@@ -42,9 +42,11 @@ def test_create_user_raises_when_second_browser_user_is_requested(tmp_path):
     )
     registry = MultiUserRegistry(pool)
     registry.create_user(display_name="A")
+    registry.create_user(display_name="B")
+    registry.create_user(display_name="C")
 
     try:
-        registry.create_user(display_name="B")
+        registry.create_user(display_name="D")
     except RuntimeError as exc:
         assert str(exc) == "no_available_browser_slot"
     else:

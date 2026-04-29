@@ -347,6 +347,78 @@ class HttpApiSearchClient:
             )
 
 
+class HttpSuggestClient(HttpApiSearchClient):
+    """HTTP 直接调用搜索联想词 API 客户端。"""
+
+    API_BASE_URL = (
+        "https://h5api.m.goofish.com/h5/"
+        "mtop.taobao.idlemtopsearch.pc.search.suggest/1.0/"
+    )
+    API_NAME = "mtop.taobao.idlemtopsearch.pc.search.suggest"
+
+    def _build_request_data(self, input_words: str) -> Dict[str, Any]:
+        return {
+            "inputWords": input_words,
+            "searchReqFromPage": "xyPcHome",
+            "bucketId": 30,
+            "type": 0,
+        }
+
+    def _parse_response(self, response: Dict[str, Any]) -> List[str]:
+        ret = response.get("ret", [])
+        ret_str = ret[0] if isinstance(ret, list) and ret else str(ret)
+
+        if "SESSION_EXPIRED" in ret_str:
+            raise HttpApiSearchError("SESSION_EXPIRED", ret_str)
+
+        if "ILLEGAL_SIGN" in ret_str:
+            raise HttpApiSearchError("ILLEGAL_SIGN", ret_str)
+
+        if ret_str and not ret_str.startswith("SUCCESS"):
+            raise HttpApiSearchError("API_ERROR", ret_str)
+
+        keywords: List[str] = []
+        seen = set()
+
+        def visit(value):
+            if isinstance(value, dict):
+                for key in ("suggest", "keyword", "showText", "text", "word", "value"):
+                    candidate = value.get(key)
+                    if isinstance(candidate, str):
+                        normalized = candidate.strip()
+                        if normalized and normalized not in seen:
+                            seen.add(normalized)
+                            keywords.append(normalized)
+                for nested in value.values():
+                    visit(nested)
+            elif isinstance(value, list):
+                for item in value:
+                    visit(item)
+
+        visit(response.get("data", {}))
+        return keywords
+
+    async def suggest(self, input_words: str) -> Dict[str, Any]:
+        if not self._get_cookie:
+            raise ValueError("get_cookie callback is required")
+
+        cookie_result = self._get_cookie()
+        cookie = (
+            await cookie_result if asyncio.iscoroutine(cookie_result) else cookie_result
+        )
+
+        if not cookie:
+            raise HttpApiSearchError("NO_COOKIE", "无法获取 Cookie")
+
+        data = self._build_request_data(input_words)
+        response = await self._send_request(cookie, data)
+        return {
+            "input_words": input_words,
+            "keywords": self._parse_response(response),
+            "raw": response,
+        }
+
+
 def _extract_want_cnt(ex_content: Dict[str, Any]) -> int:
     """从 fishTags.r3 提取想要人数"""
     try:

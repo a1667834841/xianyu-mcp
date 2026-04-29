@@ -5,12 +5,12 @@ import pytest
 
 from src.browser_pool import BrowserPoolSettings
 from src.multi_user_manager import MultiUserManager
-from src.multi_user_registry import MultiUserRegistry
+from src.multi_user_registry import MultiUserRegistry, UserRegistryEntry
 
 
-def make_manager(tmp_path):
+def make_manager(tmp_path, size=1):
     pool = BrowserPoolSettings(
-        size=1,
+        size=size,
         cdp_host="browser",
         start_port=9222,
         profile_root=tmp_path / "browser-pool",
@@ -165,6 +165,31 @@ async def test_search_with_explicit_user_id(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_suggest_keywords_uses_default_ready_user(tmp_path):
+    manager = make_manager(tmp_path)
+    entry = manager.create_user()
+    manager.registry.update_user(replace(entry, status="ready", enabled=True))
+
+    runtime = await manager._get_or_create_runtime(entry.user_id)
+
+    async def mock_suggest_keywords(input_words="x"):
+        return {"input_words": input_words, "keywords": ["显卡"], "raw": {}}
+
+    runtime.app.suggest_keywords = mock_suggest_keywords
+
+    result = await manager.suggest_keywords(input_words="x")
+
+    assert result == {
+        "success": True,
+        "user_id": entry.user_id,
+        "slot_id": entry.slot_id,
+        "input_words": "x",
+        "keywords": ["显卡"],
+        "raw": {},
+    }
+
+
+@pytest.mark.asyncio
 async def test_publish_happy_path(tmp_path):
     manager = make_manager(tmp_path)
     entry = manager.create_user()
@@ -299,3 +324,62 @@ async def test_debug_snapshot_returns_selected_user_metadata(tmp_path, monkeypat
     assert result["slot_id"] == entry.slot_id
     assert result["selected_by"] == "explicit"
     assert result["screenshot"]["uploaded"] is True
+
+
+@pytest.mark.asyncio
+async def test_debug_browser_overview_reports_per_user_errors(tmp_path):
+    manager = make_manager(tmp_path, size=2)
+    first = manager.create_user()
+    second = UserRegistryEntry(
+        user_id="user-002",
+        display_name="user-002",
+        enabled=True,
+        status="pending_login",
+        created_at="2026-04-27T00:00:00+00:00",
+        slot_id="slot-2",
+        cdp_host="browser",
+        cdp_port=9223,
+        chrome_user_data_dir=tmp_path / "browser-pool" / "slot-2" / "profile",
+        token_file=tmp_path / "users" / "user-002" / "tokens" / "token.json",
+    )
+    manager.registry._save([first, second])
+
+    class FakeApp:
+        def __init__(self, payload=None, error=None):
+            self.payload = payload
+            self.error = error
+
+        async def browser_overview(self):
+            if self.error:
+                raise RuntimeError(self.error)
+            return self.payload
+
+    manager._runtimes[first.user_id] = type(
+        "Runtime",
+        (),
+        {
+            "entry": first,
+            "app": FakeApp(
+                {
+                    "browser_context_count": 1,
+                    "contexts": [{"page_count": 1, "pages": []}],
+                }
+            ),
+        },
+    )()
+    manager._runtimes[second.user_id] = type(
+        "Runtime",
+        (),
+        {"entry": second, "app": FakeApp(error="浏览器未连接，无法获取概览")},
+    )()
+
+    result = await manager.debug_browser_overview()
+
+    assert result["users"][0]["user_id"] == first.user_id
+    assert result["users"][0]["browser_context_count"] == 1
+    assert result["users"][1] == {
+        "user_id": second.user_id,
+        "slot_id": second.slot_id,
+        "success": False,
+        "message": "浏览器未连接，无法获取概览",
+    }

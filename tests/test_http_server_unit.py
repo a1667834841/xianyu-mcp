@@ -72,7 +72,8 @@ def _install_fake_mcp(monkeypatch):
         def __init__(self, *args, **kwargs):
             self.args = args
             self.kwargs = kwargs
-            self.name = kwargs.get("name")
+            for key, value in kwargs.items():
+                setattr(self, key, value)
 
     class TextContent:
         def __init__(self, type: str, text: str):
@@ -288,6 +289,31 @@ async def test_xianyu_browser_overview_returns_manager_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_xianyu_suggest_keywords_returns_manager_payload(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    class FakeManager:
+        async def suggest_keywords(self, input_words="x"):
+            return {
+                "success": True,
+                "user_id": "user-001",
+                "slot_id": "slot-1",
+                "input_words": input_words,
+                "keywords": ["显卡"],
+                "raw": {},
+            }
+
+    monkeypatch.setattr(http_server, "get_manager", lambda: FakeManager())
+
+    payload = json.loads(await http_server.xianyu_suggest_keywords(input_words="x"))
+
+    assert payload["success"] is True
+    assert payload["user_id"] == "user-001"
+    assert payload["keywords"] == ["显卡"]
+
+
+@pytest.mark.asyncio
 async def test_stdio_list_tools_includes_browser_overview(monkeypatch):
     _install_fake_mcp(monkeypatch)
     import mcp_server.server as stdio_server
@@ -296,6 +322,17 @@ async def test_stdio_list_tools_includes_browser_overview(monkeypatch):
     tool_names = [tool.name for tool in tools]
 
     assert "xianyu_browser_overview" in tool_names
+
+
+@pytest.mark.asyncio
+async def test_stdio_list_tools_includes_suggest_keywords(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.server as stdio_server
+
+    tools = await stdio_server.list_tools()
+    tool_names = [tool.name for tool in tools]
+
+    assert "xianyu_suggest_keywords" in tool_names
 
 
 @pytest.mark.asyncio
@@ -310,6 +347,71 @@ async def test_stdio_list_tools_drops_show_qr_and_adds_multi_user_tools(monkeypa
     assert "xianyu_list_users" in tool_names
     assert "xianyu_create_user" in tool_names
     assert "xianyu_get_user_status" in tool_names
+
+
+@pytest.mark.asyncio
+async def test_stdio_publish_schema_uses_public_params_only(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.server as stdio_server
+
+    tools = await stdio_server.list_tools()
+    publish_tool = next(tool for tool in tools if tool.name == "xianyu_publish")
+    properties = publish_tool.inputSchema["properties"]
+
+    assert "title" in properties
+    assert "description" in properties
+    assert "price" in properties
+    assert "original_price" in properties
+    assert "condition" in properties
+    assert "new_title" not in properties
+    assert "new_description" not in properties
+    assert "new_price" not in properties
+    assert publish_tool.inputSchema["required"] == ["user_id", "item_url"]
+
+
+@pytest.mark.asyncio
+async def test_stdio_publish_maps_public_params_to_core_options(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.server as stdio_server
+
+    captured = {}
+
+    class FakeManager:
+        async def ensure_initialized(self):
+            return None
+
+        async def publish(self, user_id, item_url, **options):
+            captured["user_id"] = user_id
+            captured["item_url"] = item_url
+            captured.update(options)
+            return {"success": True, "item_id": "item-001"}
+
+    monkeypatch.setattr(stdio_server, "get_manager", lambda: FakeManager())
+
+    result = await stdio_server.call_tool(
+        "xianyu_publish",
+        {
+            "user_id": "user-001",
+            "item_url": "https://www.goofish.com/item?id=1",
+            "title": "新标题",
+            "description": "自定义描述",
+            "price": 88.0,
+            "original_price": 128.0,
+            "condition": "几乎全新",
+        },
+    )
+    payload = json.loads(result.content[0].text)
+
+    assert payload["success"] is True
+    assert captured == {
+        "user_id": "user-001",
+        "item_url": "https://www.goofish.com/item?id=1",
+        "new_title": "新标题",
+        "new_description": "自定义描述",
+        "new_price": 88.0,
+        "original_price": 128.0,
+        "condition": "几乎全新",
+    }
 
 
 @pytest.mark.asyncio
@@ -437,6 +539,44 @@ async def test_xianyu_debug_snapshot_returns_manager_payload(monkeypatch):
 
     assert payload["success"] is True
     assert payload["screenshot"]["uploaded"] is True
+
+
+@pytest.mark.asyncio
+async def test_http_xianyu_publish_maps_public_params_to_core_options(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    captured = {}
+
+    class FakeManager:
+        async def publish(self, **kwargs):
+            captured.update(kwargs)
+            return {"success": True, "item_id": "item-001"}
+
+    monkeypatch.setattr(http_server, "get_manager", lambda: FakeManager())
+
+    payload = json.loads(
+        await http_server.xianyu_publish(
+            user_id="user-001",
+            item_url="https://www.goofish.com/item?id=1",
+            title="新标题",
+            description="自定义描述",
+            price=88.0,
+            original_price=128.0,
+            condition="几乎全新",
+        )
+    )
+
+    assert payload["success"] is True
+    assert captured == {
+        "user_id": "user-001",
+        "item_url": "https://www.goofish.com/item?id=1",
+        "new_title": "新标题",
+        "new_description": "自定义描述",
+        "new_price": 88.0,
+        "original_price": 128.0,
+        "condition": "几乎全新",
+    }
 
 
 @pytest.mark.asyncio
