@@ -83,8 +83,53 @@ class HttpClient:
     
     async def search(self, keyword: str, rows: int = 30, **kwargs) -> List[Dict]:
         """搜索商品"""
-        # TODO: 实现搜索逻辑 (Task 3)
-        return []
+        api = "mtop.taobao.idle.pc.search/1.0"
+        
+        data = {
+            "keyword": keyword,
+            "pageNumber": 1,
+            "rowsPerPage": rows,
+            "searchReqFromPage": "pcSearch",
+        }
+        
+        if kwargs.get("min_price"):
+            data["propValueStr"] = {"price": f"{kwargs['min_price']}-{kwargs.get('max_price', '')}"}
+        
+        if kwargs.get("sort_field"):
+            data["sortField"] = kwargs["sort_field"]
+            data["sortValue"] = kwargs.get("sort_order", "DESC")
+        
+        resp = await self._send_request(api, data)
+        
+        if resp.get("ret") and "FAIL_SYS_SESSION_EXPIRED" in resp["ret"][0]:
+            raise Exception("SESSION_EXPIRED: Session 过期")
+        
+        result_list = resp.get("data", {}).get("resultList", [])
+        items = []
+        
+        for item_data in result_list:
+            try:
+                ex_content = item_data["data"]["item"]["main"]["exContent"]
+                click_param = item_data["data"]["item"]["main"].get("clickParam", {}).get("args", {})
+                
+                item_id = ex_content.get("itemId") or click_param.get("item_id")
+                if not item_id:
+                    continue
+                
+                price = click_param.get("price") or click_param.get("displayPrice")
+                if not price and ex_content.get("price"):
+                    price = ex_content["price"][0].get("text", "")
+                
+                items.append({
+                    "item_id": item_id,
+                    "title": ex_content.get("title", ""),
+                    "price": price or "",
+                    "detail_url": f"https://www.goofish.com/item?id={item_id}",
+                })
+            except (KeyError, IndexError):
+                continue
+        
+        return items
     
     async def get_item_detail(self, item_id: str) -> Dict[str, Any]:
         """获取商品详情"""
