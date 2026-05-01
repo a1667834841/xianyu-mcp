@@ -14,6 +14,7 @@ from starlette.responses import JSONResponse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.api.client import XianyuApiClient
 from src.browser_pool import BrowserPoolSettings
 from src.multi_user_manager import MultiUserManager
 from src.multi_user_registry import MultiUserRegistry
@@ -36,6 +37,15 @@ def get_manager():
         registry = MultiUserRegistry(pool)
         _manager = MultiUserManager(pool_settings=pool, registry=registry)
     return _manager
+
+
+_client = None
+
+def get_client():
+    global _client
+    if _client is None:
+        _client = XianyuApiClient()
+    return _client
 
 
 async def initialize_manager() -> None:
