@@ -87,3 +87,78 @@ class TestHttpClientSearch:
                 await client.search(keyword="test", rows=30)
             
             assert "SESSION_EXPIRED" in str(exc_info.value)
+
+
+class TestHttpClientConversation:
+    @pytest.mark.asyncio
+    async def test_create_conversation(self):
+        client = HttpClient(cookies={}, device_id="test_device")
+        
+        mock_response = {
+            "ret": ["SUCCESS::调用成功"],
+            "data": {"conversationId": "conv_123"},
+        }
+        
+        with patch.object(client, "_send_request", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = mock_response
+            
+            result = await client.create_conversation(seller_id="user_456", item_id="item_789")
+            
+            assert result == "conv_123"
+
+    @pytest.mark.asyncio
+    async def test_list_conversations(self):
+        client = HttpClient(cookies={}, device_id="test_device")
+        
+        mock_response = {
+            "ret": ["SUCCESS::调用成功"],
+            "data": {
+                "conversationList": [
+                    {
+                        "conversationId": "conv_123",
+                        "userId": "user_456",
+                        "userNick": "test_user",
+                        "lastMessage": "hello",
+                        "lastMessageTime": 1700000000000,
+                        "unreadCount": 2,
+                    }
+                ]
+            },
+        }
+        
+        with patch.object(client, "_send_request", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = mock_response
+            
+            result = await client.list_conversations(limit=20, offset=0)
+            
+            assert len(result) == 1
+            assert result[0].conversation_id == "conv_123"
+            assert result[0].user_nick == "test_user"
+
+    @pytest.mark.asyncio
+    async def test_get_message_history(self):
+        client = HttpClient(cookies={}, device_id="test_device")
+        
+        mock_response = {
+            "ret": ["SUCCESS::调用成功"],
+            "data": {
+                "messageList": [
+                    {
+                        "messageId": "msg_123",
+                        "senderId": "user_456",
+                        "receiverId": "user_789",
+                        "content": {"type": "text", "text": "hello"},
+                        "timestamp": 1700000000000,
+                    }
+                ],
+                "hasMore": False,
+            },
+        }
+        
+        with patch.object(client, "_send_request", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = mock_response
+            
+            result = await client.get_message_history(conversation_id="conv_123", limit=50)
+            
+            assert len(result["messages"]) == 1
+            assert result["has_more"] == False

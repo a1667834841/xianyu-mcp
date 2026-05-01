@@ -138,14 +138,43 @@ class HttpClient:
     
     async def create_conversation(self, seller_id: str, item_id: str = "") -> str:
         """创建对话"""
-        # TODO: 实现创建对话逻辑 (Task 4)
-        return ""
-    
+        api = "mtop.idle.trade.conversation.create/1.0"
+        data = {
+            "sellerId": seller_id,
+            "itemId": item_id or "891198795482",
+        }
+        
+        resp = await self._send_request(api, data)
+        return resp.get("data", {}).get("conversationId", "")
+
     async def list_conversations(self, limit: int = 20, offset: int = 0) -> List[Conversation]:
         """获取对话列表"""
-        # TODO: 实现获取对话列表逻辑 (Task 4)
-        return []
-    
+        api = "mtop.taobao.idle.message.conversation.list/1.0"
+        data = {
+            "limit": limit,
+            "offset": offset,
+        }
+        
+        resp = await self._send_request(api, data)
+        conv_list = resp.get("data", {}).get("conversationList", [])
+        
+        conversations = []
+        for conv_data in conv_list:
+            try:
+                conv = Conversation(
+                    conversation_id=conv_data["conversationId"],
+                    user_id=conv_data["userId"],
+                    user_nick=conv_data["userNick"],
+                    last_message=conv_data.get("lastMessage"),
+                    last_message_time=conv_data.get("lastMessageTime", 0) / 1000.0,
+                    unread_count=conv_data.get("unreadCount", 0),
+                )
+                conversations.append(conv)
+            except (KeyError, TypeError):
+                continue
+        
+        return conversations
+
     async def get_message_history(
         self, 
         conversation_id: str, 
@@ -153,8 +182,48 @@ class HttpClient:
         before_timestamp: Optional[int] = None
     ) -> Dict[str, Any]:
         """获取消息历史"""
-        # TODO: 实现获取消息历史逻辑 (Task 4)
-        return {"messages": [], "has_more": False}
+        api = "mtop.taobao.idle.message.record.get/1.0"
+        data = {
+            "conversationId": conversation_id,
+            "limit": limit,
+        }
+        
+        if before_timestamp:
+            data["beforeTimestamp"] = before_timestamp
+        
+        resp = await self._send_request(api, data)
+        msg_list = resp.get("data", {}).get("messageList", [])
+        
+        messages = []
+        for msg_data in msg_list:
+            try:
+                content_type = msg_data["content"].get("type", "text")
+                if content_type == "text":
+                    content = TextContent(type="text", text=msg_data["content"].get("text", ""))
+                elif content_type == "image":
+                    content = ImageContent(
+                        type="image",
+                        image_url=msg_data["content"].get("imageUrl", ""),
+                    )
+                else:
+                    content = TextContent(type="text", text=str(msg_data["content"]))
+                
+                msg = ChatMessage(
+                    message_id=msg_data["messageId"],
+                    conversation_id=conversation_id,
+                    sender_id=msg_data["senderId"],
+                    receiver_id=msg_data["receiverId"],
+                    content=content,
+                    timestamp=msg_data.get("timestamp", 0) / 1000.0,
+                )
+                messages.append(msg)
+            except (KeyError, TypeError):
+                continue
+        
+        return {
+            "messages": messages,
+            "has_more": resp.get("data", {}).get("hasMore", False),
+        }
     
     async def refresh_token(self) -> Dict[str, Any]:
         """刷新 Token"""
