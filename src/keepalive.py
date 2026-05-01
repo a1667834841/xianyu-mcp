@@ -21,14 +21,12 @@ class CookieKeepaliveService:
         browser: Any,
         session: Any,
         interval_minutes: int,
-        page_coordinator: Any | None = None,
         on_cookie_saved: Callable[[str | None], None] | None = None,
         on_error: Callable[[str], None] | None = None,
     ):
         self.browser = browser
         self.session = session
         self.interval_minutes = interval_minutes
-        self.page_coordinator = page_coordinator
         self.on_cookie_saved = on_cookie_saved
         self.on_error = on_error
         self._task: Optional[asyncio.Task] = None
@@ -72,10 +70,7 @@ class CookieKeepaliveService:
             if not await self.browser.ensure_running():
                 return
 
-            if self.page_coordinator is not None:
-                page = await self.page_coordinator.get_keepalive_page()
-            else:
-                page = await self.browser.get_keepalive_page()
+            page = await self.browser.get_keepalive_page()
 
             if page is None:
                 logger.warning("No keepalive page available")

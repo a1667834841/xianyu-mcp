@@ -24,10 +24,8 @@ try:
 except ImportError:
     from browser import AsyncChromeManager
 
-try:
-    from .page_coordinator import PageCoordinator
-except ImportError:
-    from page_coordinator import PageCoordinator
+
+
 
 
 # ==================== 二维码显示相关 ====================
@@ -173,14 +171,7 @@ class SessionManager:
         self,
         chrome_manager: Optional[AsyncChromeManager] = None,
         settings: Optional[AppSettings] = None,
-        page_coordinator: Any | None = None,
     ):
-        """
-        初始化会话管理器
-
-        Args:
-            chrome_manager: 浏览器管理器实例
-        """
         resolved_settings = (
             settings
             or (getattr(chrome_manager, "settings", None) if chrome_manager else None)
@@ -190,7 +181,6 @@ class SessionManager:
         self.chrome_manager = chrome_manager or AsyncChromeManager(
             settings=self.settings
         )
-        self.page_coordinator = page_coordinator or PageCoordinator(self.chrome_manager)
         self.token: Optional[str] = None
         self.full_cookie: Optional[str] = None
         self.token_file = self.settings.storage.token_file
@@ -205,12 +195,6 @@ class SessionManager:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """异步上下文管理器出口"""
         await self.chrome_manager.close()
-
-    async def _lease_session_page(self):
-        return await self.page_coordinator.lease_session_page()
-
-    async def _lease_task_page(self):
-        return await self.page_coordinator.lease_task_page()
 
     async def _ensure_session_page(self):
         """显式切换到会话角色页，避免复用搜索/发布页。"""
@@ -232,37 +216,30 @@ class SessionManager:
                 print("[Session] 浏览器启动失败")
                 return None
 
-            lease = await self._lease_task_page()
-            async with lease:
-                page = lease.page
+            page = await self.chrome_manager.get_search_page()
 
-                # 导航到闲鱼首页
-                print("[Session] 正在刷新 token...")
-                await self.chrome_manager.navigate("https://www.goofish.com", page=page)
+            print("[Session] 正在刷新 token...")
+            await self.chrome_manager.navigate("https://www.goofish.com", page=page)
 
-                # 等待页面加载
-                import asyncio
+            import asyncio
 
-                await asyncio.sleep(2)
+            await asyncio.sleep(2)
 
-                # 从浏览器获取最新 cookie
-                token = await self.chrome_manager.get_xianyu_token()
-                full_cookie = await self.chrome_manager.get_cookie("_m_h5_tk")
+            token = await self.chrome_manager.get_xianyu_token()
+            full_cookie = await self.chrome_manager.get_cookie("_m_h5_tk")
 
-                if not token:
-                    print("[Session] 无法获取 token，请检查是否已登录")
-                    return None
+            if not token:
+                print("[Session] 无法获取 token，请检查是否已登录")
+                return None
 
-                # 更新内存中的 token
-                self.token = token
-                self.full_cookie = full_cookie
+            self.token = token
+            self.full_cookie = full_cookie
 
-                # 获取完整 cookie 字符串并保存
-                full_cookie_str = await self.chrome_manager.get_full_cookie_string()
-                self.save_cookie(full_cookie_str)
+            full_cookie_str = await self.chrome_manager.get_full_cookie_string()
+            self.save_cookie(full_cookie_str)
 
-                print(f"[Session] Token 刷新成功")
-                return {"token": token, "full_cookie": full_cookie}
+            print(f"[Session] Token 刷新成功")
+            return {"token": token, "full_cookie": full_cookie}
 
         except Exception as e:
             print(f"[Session] 刷新 token 失败：{e}")
@@ -284,126 +261,111 @@ class SessionManager:
                 print("[Session] 浏览器未运行")
                 return False
 
-            lease = await self._lease_task_page()
-            async with lease:
-                page = lease.page
+            page = await self.chrome_manager.get_search_page()
 
-                # 导航到闲鱼首页确保 cookie 是最新的
-                print("[Session] 正在检查 cookie 有效性...")
-                await self.chrome_manager.navigate("https://www.goofish.com", page=page)
+            print("[Session] 正在检查 cookie 有效性...")
+            await self.chrome_manager.navigate("https://www.goofish.com", page=page)
 
-                import asyncio
+            import asyncio
 
-                await asyncio.sleep(2)
+            await asyncio.sleep(2)
 
-                # 获取完整 cookie 字符串（包含 cookie2, _m_h5_tk, sgcookie 等）
-                full_cookie_str = await self.chrome_manager.get_full_cookie_string()
+            full_cookie_str = await self.chrome_manager.get_full_cookie_string()
 
-                if not full_cookie_str:
-                    print("[Session] 未找到 cookie")
-                    return False
+            if not full_cookie_str:
+                print("[Session] 未找到 cookie")
+                return False
 
-                # 从浏览器获取 _m_h5_tk cookie 用于签名（格式：token_timestamp）
-                m_h5_tk = await self.chrome_manager.get_cookie("_m_h5_tk")
-                if not m_h5_tk:
-                    print("[Session] 无法获取 _m_h5_tk")
-                    return False
+            m_h5_tk = await self.chrome_manager.get_cookie("_m_h5_tk")
+            if not m_h5_tk:
+                print("[Session] 无法获取 _m_h5_tk")
+                return False
 
-                # 构建请求
-                data = {}
-                sign_params = self._generate_sign(data, m_h5_tk)
+            data = {}
+            sign_params = self._generate_sign(data, m_h5_tk)
 
-                # 设置请求头
-                headers = {
-                    "accept": "application/json",
-                    "accept-language": "zh-CN,zh;q=0.9",
-                    "content-type": "application/x-www-form-urlencoded",
-                    "origin": "https://www.goofish.com",
-                    "referer": "https://www.goofish.com/",
-                    "sec-ch-ua": '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
-                    "sec-ch-ua-mobile": "?0",
-                    "sec-ch-ua-platform": '"macOS"',
-                    "sec-fetch-dest": "empty",
-                    "sec-fetch-mode": "cors",
-                    "sec-fetch-site": "same-site",
-                    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-                    "cookie": full_cookie_str,
-                }
+            headers = {
+                "accept": "application/json",
+                "accept-language": "zh-CN,zh;q=0.9",
+                "content-type": "application/x-www-form-urlencoded",
+                "origin": "https://www.goofish.com",
+                "referer": "https://www.goofish.com/",
+                "sec-ch-ua": '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"macOS"',
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-site",
+                "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+                "cookie": full_cookie_str,
+            }
 
-                # 构建 URL 参数
-                url_params = {
-                    "jsv": "2.7.2",
-                    "appKey": sign_params["appKey"],
-                    "t": sign_params["t"],
-                    "sign": sign_params["sign"],
-                    "v": "1.0",
-                    "type": "originaljson",
-                    "accountSite": "xianyu",
-                    "dataType": "json",
-                    "timeout": "20000",
-                    "api": self.API_NAME,
-                    "sessionOption": "AutoLoginOnly",
-                }
+            url_params = {
+                "jsv": "2.7.2",
+                "appKey": sign_params["appKey"],
+                "t": sign_params["t"],
+                "sign": sign_params["sign"],
+                "v": "1.0",
+                "type": "originaljson",
+                "accountSite": "xianyu",
+                "dataType": "json",
+                "timeout": "20000",
+                "api": self.API_NAME,
+                "sessionOption": "AutoLoginOnly",
+            }
 
-                # 发送 POST 请求（带重试）
-                session = requests.Session()
-                max_retries = 2
-                for attempt in range(max_retries + 1):
-                    try:
-                        response = session.post(
-                            self.API_BASE_URL,
-                            params=url_params,
-                            headers=headers,
-                            data={"data": sign_params["data"]},
-                            timeout=10,
-                        )
+            session = requests.Session()
+            max_retries = 2
+            for attempt in range(max_retries + 1):
+                try:
+                    response = session.post(
+                        self.API_BASE_URL,
+                        params=url_params,
+                        headers=headers,
+                        data={"data": sign_params["data"]},
+                        timeout=10,
+                    )
 
-                        result = response.json()
+                    result = response.json()
 
-                        # 判断是否成功
-                        ret = result.get("ret", [])
-                        if not ret or "SUCCESS" not in ret[0]:
-                            # 真正过期才返回 False
-                            if ret and "SESSION_EXPIRED" in ret[0]:
-                                print(f"[Session] Cookie 已过期：{ret[0]}")
-                                return False
-                            # 其他错误可能是临时问题，重试
-                            print(
-                                f"[Session] 检查 cookie 收到响应：{ret} (尝试 {attempt + 1}/{max_retries + 1})"
-                            )
-                            if attempt < max_retries:
-                                await asyncio.sleep(1)
-                                continue
+                    ret = result.get("ret", [])
+                    if not ret or "SUCCESS" not in ret[0]:
+                        if ret and "SESSION_EXPIRED" in ret[0]:
+                            print(f"[Session] Cookie 已过期：{ret[0]}")
                             return False
-
-                        # 深度检查：验证是否返回真实用户信息
-                        module = result.get("data", {}).get("module", {})
-                        base = module.get("base", {})
-                        display_name = base.get("displayName")
-
-                        if display_name:
-                            print(f"[Session] Cookie 有效，用户：{display_name}")
-                            await self.page_coordinator.close_session_page()
-                            self._last_display_name = display_name
-                            return True
-                        else:
-                            # 返回 SUCCESS 但没有用户信息，可能是异常状态
-                            print(f"[Session] 接口返回成功但未获取到用户信息")
-                            if attempt < max_retries:
-                                await asyncio.sleep(1)
-                                continue
-                            return False
-
-                    except requests.exceptions.RequestException as e:
                         print(
-                            f"[Session] 网络请求失败 (尝试 {attempt + 1}/{max_retries + 1}): {e}"
+                            f"[Session] 检查 cookie 收到响应：{ret} (尝试 {attempt + 1}/{max_retries + 1})"
                         )
                         if attempt < max_retries:
                             await asyncio.sleep(1)
                             continue
                         return False
 
-                return False
+                    module = result.get("data", {}).get("module", {})
+                    base = module.get("base", {})
+                    display_name = base.get("displayName")
+
+                    if display_name:
+                        print(f"[Session] Cookie 有效，用户：{display_name}")
+                        self._last_display_name = display_name
+                        return True
+                    else:
+                        print(f"[Session] 接口返回成功但未获取到用户信息")
+                        if attempt < max_retries:
+                            await asyncio.sleep(1)
+                            continue
+                        return False
+
+                except requests.exceptions.RequestException as e:
+                    print(
+                        f"[Session] 网络请求失败 (尝试 {attempt + 1}/{max_retries + 1}): {e}"
+                    )
+                    if attempt < max_retries:
+                        await asyncio.sleep(1)
+                        continue
+                    return False
+
+            return False
 
         except Exception as e:
             print(f"[Session] 检查 cookie 失败：{e}")
@@ -576,9 +538,7 @@ class SessionManager:
         if not await self.chrome_manager.ensure_running():
             return {"success": False, "message": "浏览器启动失败"}
 
-        # 设置二维码 API 监听器（在导航之前）
-        lease = await self._lease_session_page()
-        page = lease.page
+        page = await self.chrome_manager.get_session_page()
         if not page:
             return {"success": False, "message": "无法获取页面"}
 
@@ -610,11 +570,8 @@ class SessionManager:
         def on_response(response):
             asyncio.create_task(process_response(response))
 
-        # 先设置监听器
         page.on("response", on_response)
-        await lease.release()
 
-        # 访问闲鱼首页
         print("[Session] 正在访问闲鱼首页...")
         await self.chrome_manager.navigate("https://www.goofish.com", page=page)
         await asyncio.sleep(2)
@@ -623,7 +580,6 @@ class SessionManager:
             print("[Session] 已登录")
             m_h5_tk = await self.chrome_manager.get_cookie("_m_h5_tk")
             self.save_cookie(await self.chrome_manager.get_full_cookie_string())
-            await self.page_coordinator.close_session_page()
             return {
                 "success": True,
                 "logged_in": True,
@@ -675,7 +631,6 @@ class SessionManager:
 
         except asyncio.TimeoutError:
             print(f"[Session] 等待二维码响应超时")
-            await self.page_coordinator.close_session_page()
             return {"success": False, "message": "获取二维码超时"}
 
     async def _restore_cookie(self, cookie_str: str):
