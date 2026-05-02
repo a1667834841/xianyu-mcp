@@ -655,3 +655,34 @@ async def test_initialize_manager_skips_ws_when_cookie_invalid(monkeypatch):
     await http_server.initialize_manager()
 
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_initialize_manager_handles_check_session_exception(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    class FakeClient:
+        async def check_session(self):
+            raise RuntimeError("network error")
+
+    monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
+
+    await http_server.initialize_manager()
+
+
+@pytest.mark.asyncio
+async def test_initialize_manager_handles_ensure_ws_exception(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    class FakeClient:
+        async def check_session(self):
+            return {"valid": True}
+
+        async def ensure_ws_started(self, reason):
+            raise RuntimeError("ws failed")
+
+    monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
+
+    await http_server.initialize_manager()
