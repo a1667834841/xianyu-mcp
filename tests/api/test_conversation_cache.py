@@ -231,3 +231,87 @@ def test_add_message_without_conversation():
     # 验证消息已添加
     messages = cache.get_messages("conv_new")
     assert len(messages) == 1
+
+
+def test_get_conversation_by_user():
+    """测试按 user_id 查找对话"""
+    cache = ConversationCache()
+    
+    conv1 = Conversation(
+        conversation_id="conv1",
+        user_id="user1",
+        user_nick="用户1",
+        last_message="消息1",
+        last_message_time=1000.0,
+        unread_count=0
+    )
+    
+    cache.update_conversation(conv1)
+    
+    # 查找存在的对话
+    found_conv = cache.get_conversation_by_user("user1")
+    assert found_conv is not None
+    assert found_conv.conversation_id == "conv1"
+    
+    # 查找不存在的对话
+    not_found = cache.get_conversation_by_user("user_unknown")
+    assert not_found is None
+
+
+def test_mark_read():
+    """测试标记对话为已读"""
+    cache = ConversationCache()
+    
+    conv1 = Conversation(
+        conversation_id="conv1",
+        user_id="user1",
+        user_nick="用户1",
+        last_message="消息1",
+        last_message_time=1000.0,
+        unread_count=5
+    )
+    
+    cache.update_conversation(conv1)
+    
+    # 标记为已读
+    cache.mark_read("conv1")
+    
+    conversations = cache.get_conversations()
+    assert conversations[0].unread_count == 0
+
+
+def test_clear():
+    """测试清空缓存"""
+    cache = ConversationCache()
+    
+    # 添加对话和消息
+    conv = Conversation(
+        conversation_id="conv1",
+        user_id="user1",
+        user_nick="用户1",
+        last_message="消息1",
+        last_message_time=1000.0,
+        unread_count=0
+    )
+    cache.update_conversation(conv)
+    
+    msg = ChatMessage(
+        message_id="msg1",
+        conversation_id="conv1",
+        sender_id="user1",
+        receiver_id="user2",
+        content=TextContent(type="text", text="你好"),
+        timestamp=1000.0
+    )
+    cache.add_message("conv1", msg)
+    
+    # 验证缓存有数据
+    assert len(cache.get_conversations()) == 1
+    assert len(cache.get_messages("conv1")) == 1
+    
+    # 清空缓存
+    cache.clear()
+    
+    # 验证缓存已清空
+    assert len(cache.get_conversations()) == 0
+    assert len(cache.get_messages("conv1")) == 0

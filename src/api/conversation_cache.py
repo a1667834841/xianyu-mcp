@@ -87,12 +87,17 @@ class ConversationCache:
 
     def get_conversation_by_user(self, user_id: str) -> Optional[Conversation]:
         """按 user_id 查找对话"""
+        for conv in self._conversations.values():
+            if conv.user_id == user_id:
+                return conv
         return None
 
     def mark_read(self, conv_id: str) -> None:
-        """标记对话为已读"""
-        pass
+        """标记对话为已读（清空 unread_count）"""
+        if conv_id in self._conversations:
+            self._conversations[conv_id].unread_count = 0
 
     def clear(self) -> None:
         """清空缓存"""
-        pass
+        self._conversations.clear()
+        self._messages.clear()
