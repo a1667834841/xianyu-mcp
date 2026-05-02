@@ -39,7 +39,21 @@ def get_client():
 
 
 async def initialize_manager() -> None:
-    pass
+    client = get_client()
+    try:
+        result = await client.check_session()
+    except Exception as exc:
+        logger.warning(f"[MCP HTTP] 启动时检查会话失败，跳过 WS 自动启动: {exc}")
+        return
+
+    if not result.get("valid"):
+        logger.info("[MCP HTTP] Cookie 无效，跳过 WS 自动启动")
+        return
+
+    try:
+        await client.ensure_ws_started(reason="service_start")
+    except Exception as exc:
+        logger.warning(f"[MCP HTTP] WS 自动启动失败，不阻塞服务启动: {exc}")
 
 
 mcp = FastMCP(

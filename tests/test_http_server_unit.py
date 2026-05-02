@@ -611,3 +611,47 @@ async def test_http_ws_status_returns_detailed_status(monkeypatch):
     assert payload["connected"] is False
     assert payload["status"] == "failed"
     assert payload["last_error"] == "token failed"
+
+
+@pytest.mark.asyncio
+async def test_initialize_manager_starts_ws_when_cookie_valid(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    calls = []
+
+    class FakeClient:
+        async def check_session(self):
+            return {"valid": True}
+
+        async def ensure_ws_started(self, reason):
+            calls.append(reason)
+            return {"success": True, "status": "starting", "reason": reason}
+
+    monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
+
+    await http_server.initialize_manager()
+
+    assert calls == ["service_start"]
+
+
+@pytest.mark.asyncio
+async def test_initialize_manager_skips_ws_when_cookie_invalid(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    calls = []
+
+    class FakeClient:
+        async def check_session(self):
+            return {"valid": False}
+
+        async def ensure_ws_started(self, reason):
+            calls.append(reason)
+            return {"success": True, "status": "starting", "reason": reason}
+
+    monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
+
+    await http_server.initialize_manager()
+
+    assert calls == []
