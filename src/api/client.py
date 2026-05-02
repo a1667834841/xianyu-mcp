@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from typing import Dict, Any, Optional, List
 
 from .http_client import HttpClient
@@ -38,9 +39,13 @@ class XianyuApiClient:
         
         self._initialized = True
     
-    def initialize(self, cookies: Dict[str, str], device_id: str):
+    async def initialize(self, cookies: Dict[str, str], device_id: str):
         """初始化客户端"""
+        if self.ws_client and self.ws_client.is_connected:
+            await self.ws_client.stop()
+        
         self.http_client = HttpClient(cookies=cookies, device_id=device_id)
+        self.ws_client = WebSocketClient(self.http_client)
         
         self.browser_bridge = BrowserBridge()
         
@@ -258,39 +263,44 @@ class XianyuApiClient:
 
         self.ws_status = "starting"
         self.ws_last_error = None
-        import time
         self.ws_started_at = time.strftime("%Y-%m-%dT%H:%M:%S")
         self._ws_start_task = asyncio.create_task(self._run_ws_start(reason))
         return {"success": True, "status": "starting", "reason": reason}
 
     async def _run_ws_start(self, reason: str) -> None:
+        logger.info(f"Starting WebSocket connection (reason: {reason})")
         try:
             success = await self.ws_client.connect()
             if not success:
                 self.ws_status = "failed"
                 self.ws_last_error = "WebSocket connect returned false"
+                logger.error(f"WebSocket connection failed (reason: {reason})")
                 return
 
             for _ in range(30):
                 if self.ws_client.is_connected:
                     self.ws_status = "connected"
                     self.ws_last_error = None
+                    logger.info(f"WebSocket connected successfully (reason: {reason})")
                     return
                 await asyncio.sleep(1)
 
             self.ws_status = "failed"
             self.ws_last_error = "WebSocket initialization timed out"
+            logger.error(f"WebSocket initialization timed out (reason: {reason})")
         except Exception as exc:
             self.ws_status = "failed"
             self.ws_last_error = str(exc)
+            logger.error(f"WebSocket start error (reason: {reason}): {exc}")
     
     async def start_ws_listener(self) -> Dict[str, Any]:
-        """启动 WebSocket 监听"""
+        """确保 WebSocket 监听启动。"""
         try:
-            success = await self.ws_client.connect()
-            return {"success": success, "message": "监听已启动" if success else "启动失败"}
+            return await self.ensure_ws_started(reason="manual")
         except Exception as e:
-            return {"success": False, "message": str(e)}
+            self.ws_status = "failed"
+            self.ws_last_error = str(e)
+            return {"success": False, "status": "failed", "message": str(e)}
 
     async def stop_ws_listener(self) -> Dict[str, Any]:
         """停止 WebSocket 监听"""
@@ -309,7 +319,7 @@ class XianyuApiClient:
             return {"success": False, "message": str(e)}
 
     def ws_is_connected(self) -> bool:
-        return self.ws_client.is_connected
+        return bool(self.ws_client and self.ws_client.is_connected)
 
     def ws_on_message(self, handler):
         self.ws_client.on_message(handler)

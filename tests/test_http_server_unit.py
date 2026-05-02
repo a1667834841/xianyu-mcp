@@ -588,3 +588,26 @@ async def test_stdio_list_tools_includes_debug_snapshot(monkeypatch):
     tool_names = [tool.name for tool in tools]
 
     assert "xianyu_debug_snapshot" in tool_names
+
+
+@pytest.mark.asyncio
+async def test_http_ws_status_returns_detailed_status(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    class FakeClient:
+        def get_ws_status(self):
+            return {
+                "connected": False,
+                "status": "failed",
+                "last_error": "token failed",
+                "started_at": "2026-05-03T01:02:03",
+            }
+
+    monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
+
+    payload = json.loads(await http_server.xianyu_ws_status())
+
+    assert payload["connected"] is False
+    assert payload["status"] == "failed"
+    assert payload["last_error"] == "token failed"

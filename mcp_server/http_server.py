@@ -187,8 +187,7 @@ async def xianyu_ws_send(user_id: str | None = None, target_id: str = "", conten
 async def xianyu_ws_status(user_id: str | None = None) -> str:
     """检查 WebSocket 连接状态"""
     client = get_client()
-    connected = client.ws_is_connected()
-    return json.dumps({"connected": connected}, ensure_ascii=False)
+    return json.dumps(client.get_ws_status(), ensure_ascii=False)
 
 
 @mcp.tool()
