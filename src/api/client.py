@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any, Optional, List
 
 from .http_client import HttpClient
+from .websocket_client import WebSocketClient
 from .websocket_pool import WebSocketPool
 from .types import Conversation
 from src.browser_bridge import BrowserBridge
@@ -24,7 +25,8 @@ class XianyuApiClient:
         if self._initialized:
             return
         
-        self.http_client = HttpClient(cookies={}, device_id="")
+        self.http_client = HttpClient(cookies=None, device_id="")
+        self.ws_client = WebSocketClient(self.http_client)
         self.websocket_pool = WebSocketPool()
         self.browser_bridge = BrowserBridge()
         
@@ -37,10 +39,16 @@ class XianyuApiClient:
         self.browser_bridge = BrowserBridge()
     
     async def login(self, timeout: int = 300) -> Dict[str, Any]:
-        """登录"""
+        """登录 - 纯 HTTP 获取二维码（不依赖浏览器）"""
         if not self.http_client:
             return {"success": False, "message": "客户端未初始化"}
         return await self.http_client.login(timeout=timeout)
+    
+    async def login_poll(self, t: str, ck: str) -> Dict[str, Any]:
+        """轮询扫码状态"""
+        if not self.http_client:
+            return {"success": False, "message": "客户端未初始化"}
+        return await self.http_client.login_poll(t=t, ck=ck)
     
     async def check_session(self) -> Dict[str, Any]:
         """检查会话"""
@@ -83,23 +91,43 @@ class XianyuApiClient:
         
         return await self.http_client.get_item_detail(item_id=item_id)
     
-    async def publish(self, item_url: str, **kwargs) -> Dict[str, Any]:
-        """发布商品，API 优先，失败降级浏览器"""
+    async def publish(
+        self,
+        images_paths: List[str] = None,
+        title: str = "",
+        price: Dict[str, float] = None,
+        shipping: str = "包邮",
+        self_pickup: bool = False,
+        post_price: float = 0,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """发布商品
+        
+        Args:
+            images_paths: 图片路径列表
+            title: 商品标题
+            price: 价格 {"current_price": 100, "original_price": 200}
+            shipping: 物流选项
+            self_pickup: 是否支持自提
+            post_price: 物流费用
+        """
         if not self.http_client:
-            return {"success": False}
+            return {"success": False, "message": "客户端未初始化"}
         
-        try:
-            result = await self.http_client.publish(item_url=item_url, **kwargs)
-            if result.get("success"):
-                result["method"] = "http"
-                return result
-        except Exception as e:
-            logger.warning(f"API 发布失败，降级到浏览器: {e}")
+        if not images_paths:
+            return {"success": False, "message": "需要提供图片路径"}
         
-        if self.browser_bridge:
-            return await self.browser_bridge.publish_via_browser(item_url=item_url, **kwargs)
+        if not title:
+            return {"success": False, "message": "需要提供商品标题"}
         
-        return {"success": False, "method": "none"}
+        return await self.http_client.publish(
+            images_paths=images_paths,
+            title=title,
+            price=price,
+            shipping=shipping,
+            self_pickup=self_pickup,
+            post_price=post_price,
+        )
     
     async def create_conversation(self, item_url: str, seller_id: str = "") -> str:
         """创建对话"""
@@ -163,6 +191,36 @@ class XianyuApiClient:
             return item_url.split("item?id=")[-1].split("&")[0]
         return ""
     
+    async def start_ws_listener(self) -> Dict[str, Any]:
+        """启动 WebSocket 监听"""
+        try:
+            success = await self.ws_client.start()
+            return {"success": success, "message": "监听已启动" if success else "启动失败"}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    async def stop_ws_listener(self) -> Dict[str, Any]:
+        """停止 WebSocket 监听"""
+        try:
+            await self.ws_client.stop()
+            return {"success": True, "message": "监听已停止"}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    async def ws_send_message(self, target_id: str, content: str = "", image_url: str = "", conversation_id: str = "") -> Dict[str, Any]:
+        """通过 WebSocket 发送消息"""
+        try:
+            success = await self.ws_client.send_message(target_id, content, image_url, conversation_id)
+            return {"success": success, "message": "消息已发送" if success else "发送失败"}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def ws_is_connected(self) -> bool:
+        return self.ws_client.is_connected()
+
+    def ws_on_message(self, handler):
+        self.ws_client.on_message(handler)
+
     async def close(self):
         """关闭客户端"""
         if self.http_client:
