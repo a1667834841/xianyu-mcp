@@ -131,9 +131,17 @@ class HttpClient:
         self, 
         api: str, 
         data: Dict[str, Any], 
-        v: str = "1.0"
+        v: str = "1.0",
+        retry_on_captcha: bool = True
     ) -> Dict[str, Any]:
-        """发送 MTOP API 请求并自动保存 cookies"""
+        """发送 MTOP API 请求并自动保存 cookies
+        
+        Args:
+            api: API 名称
+            data: 请求数据
+            v: 版本号
+            retry_on_captcha: 是否在验证码触发时自动处理并重试
+        """
         cookie_str = "; ".join([f"{k}={v}" for k, v in self.cookies.items()])
         
         token = self._extract_token_from_cookie(cookie_str)
@@ -175,10 +183,88 @@ class HttpClient:
             # 每次请求后保存 cookies
             self._save_cookies_from_response(resp)
             
-            return resp.json()
+            result = resp.json()
+            
+            # 检测验证码触发
+            if retry_on_captcha and self._need_captcha(result):
+                verification_url = result.get('data', {}).get('url', '')
+                
+                logger.warning(f"[HttpClient] 触发滑块验证: {verification_url[:100]}")
+                
+                # 处理滑块验证
+                if await self._handle_captcha(verification_url):
+                    # 重试原请求（不再次触发验证码处理）
+                    logger.info("[HttpClient] 验证成功，重试请求")
+                    return await self._send_request(api, data, v, retry_on_captcha=False)
+                else:
+                    logger.error("[HttpClient] 验证失败，返回原错误")
+            
+            return result
+            
         except Exception as e:
             logger.error(f"MTOP API 请求失败：{e}")
             raise
+    
+    def _need_captcha(self, resp: Dict[str, Any]) -> bool:
+        """检测是否需要滑块验证
+        
+        Args:
+            resp: API 响应
+            
+        Returns:
+            bool: 是否需要验证码
+        """
+        keywords = [
+            'FAIL_SYS_USER_VALIDATE',
+            'RGV587_ERROR::SM::请稍后重试',
+            'FAIL_SYS_TOKEN_EXOIRED',
+        ]
+        
+        ret = resp.get('ret', [])
+        ret_str = str(ret)
+        
+        for keyword in keywords:
+            if keyword in ret_str:
+                return True
+        
+        return False
+    
+    async def _handle_captcha(self, verification_url: str) -> bool:
+        """处理滑块验证
+        
+        Args:
+            verification_url: 验证码 URL
+            
+        Returns:
+            bool: 验证是否成功
+        """
+        if not verification_url:
+            logger.error("[HttpClient] 验证 URL 为空")
+            return False
+        
+        try:
+            from .captcha_handler import CaptchaHandler
+            
+            handler = CaptchaHandler(self)
+            success = await handler.handle(verification_url, max_retries=3)
+            
+            return success
+            
+        except ImportError as e:
+            logger.error(f"[HttpClient] 无法导入 CaptchaHandler: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"[HttpClient] 处理验证码失败: {e}")
+            return False
+    
+    def _save_cookies_to_file(self):
+        """保存 cookies 到 auth.json"""
+        try:
+            from src.utils import save_local_auth
+            save_local_auth(self.cookies)
+            logger.debug("[HttpClient] cookies 已保存到文件")
+        except Exception as e:
+            logger.warning(f"[HttpClient] 保存 cookies 失败: {e}")
     
     def _save_cookies_from_response(self, resp):
         """从响应中保存所有 cookies"""
