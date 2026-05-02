@@ -280,11 +280,23 @@ async def xianyu_send_message(
 
 @mcp.tool()
 async def xianyu_browser_overview(user_id: str | None = None) -> str:
+    """获取浏览器概览"""
     client = get_client()
     try:
-        overview = await client.browser_bridge.browser_overview()
+        # 直接从 browser 获取，browser_bridge 没有 browser_overview 方法
+        from src.browser import AsyncChromeManager
+        from src.settings import load_settings
+        
+        settings = load_settings()
+        browser = AsyncChromeManager(settings=settings)
+        
+        if not await browser.ensure_running():
+            return json.dumps({"success": False, "message": "浏览器未连接"}, ensure_ascii=False)
+        
+        overview = await browser.get_browser_overview()
         response = {"success": True, **overview}
-    except RuntimeError as exc:
+        await browser.close()
+    except Exception as exc:
         response = {"success": False, "message": str(exc)}
     return json.dumps(response, ensure_ascii=False)
 
@@ -294,9 +306,26 @@ async def xianyu_debug_snapshot(
     user_id: str | None = None,
     full_page: bool = True,
 ) -> str:
-    client = get_client()
+    """调试截图"""
     try:
-        payload = await client.browser_bridge.debug_snapshot(full_page=full_page)
+        from src.browser import AsyncChromeManager
+        from src.browser_debugger import BrowserDebugger
+        from src.settings import load_settings
+        
+        settings = load_settings()
+        browser = AsyncChromeManager(settings=settings)
+        
+        if not await browser.ensure_running():
+            return json.dumps({"success": False, "message": "浏览器未连接"}, ensure_ascii=False)
+        
+        debugger = BrowserDebugger(browser)
+        payload = await debugger.capture_snapshot(
+            user_id=user_id or "default",
+            slot_id="0",
+            selected_by="manual",
+            full_page=full_page,
+        )
+        await browser.close()
         return json.dumps(payload, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
