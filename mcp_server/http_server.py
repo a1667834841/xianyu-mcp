@@ -204,20 +204,56 @@ async def xianyu_get_access_token(user_id: str | None = None) -> str:
 
 @mcp.tool()
 async def xianyu_list_conversations(user_id: str | None = None, limit: int = 20) -> str:
-    """获取对话列表"""
+    """获取对话列表（通过 WebSocket LWP 协议）
+    
+    注意：需要先启动 WebSocket 监听才能使用。
+    使用 xianyu_start_listener 启动监听。
+    
+    Args:
+        limit: 返回对话数量上限（默认 20）
+    
+    Returns:
+        对话列表，每个对话包含：
+        - cid: 对话 ID
+        - peer_user_name: 对方用户名
+        - last_message: 最后消息摘要
+        - unread_count: 未读消息数
+        - item_id: 商品 ID
+    """
     client = get_client()
-    conversations = await client.list_conversations(limit=limit)
-    result = [
-        {
-            "conversation_id": c.conversation_id,
-            "user_id": c.user_id,
-            "user_nick": c.user_nick,
-            "last_message": c.last_message,
-            "unread_count": c.unread_count,
-        }
-        for c in conversations
-    ]
-    return json.dumps(result, ensure_ascii=False, indent=2)
+    
+    # 检查 WebSocket 是否连接
+    if not client.ws_is_connected():
+        return json.dumps({
+            "success": False,
+            "message": "WebSocket 未连接，请先调用 xianyu_start_listener"
+        }, ensure_ascii=False)
+    
+    # 使用 WebSocket LWP 协议获取对话列表
+    result = await client.ws_client.get_conversation_list(max_sort_index=None, page_size=limit)
+    
+    if not result.get("success"):
+        return json.dumps(result, ensure_ascii=False)
+    
+    # 格式化返回
+    conversations = []
+    for conv in result.get("conversations", []):
+        conversations.append({
+            "conversation_id": conv.get("cid", ""),
+            "user_id": conv.get("cid", ""),  # 闲鱼对话 ID 就是用户 ID
+            "user_nick": conv.get("peer_user_name", ""),
+            "last_message": conv.get("last_message", ""),
+            "last_message_time": conv.get("last_message_time", 0),
+            "unread_count": conv.get("unread_count", 0),
+            "item_id": conv.get("item_id", ""),
+        })
+    
+    return json.dumps({
+        "success": True,
+        "conversations": conversations,
+        "hasMore": result.get("hasMore", False),
+        "count": len(conversations),
+    }, ensure_ascii=False, indent=2)
 
 
 @mcp.tool()
@@ -226,10 +262,11 @@ async def xianyu_create_conversation(
     item_url: str = "",
     seller_id: str = "",
 ) -> str:
-    """创建对话"""
-    client = get_client()
-    conversation_id = await client.create_conversation(item_url=item_url, seller_id=seller_id)
-    return json.dumps({"success": True, "conversation_id": conversation_id}, ensure_ascii=False)
+    """创建对话（已失效）"""
+    return json.dumps({
+        "success": False,
+        "message": "此 API 已失效，请使用 xianyu_ws_send 直接发送消息"
+    }, ensure_ascii=False)
 
 
 @mcp.tool()
@@ -238,27 +275,68 @@ async def xianyu_get_messages(
     conversation_id: str = "",
     limit: int = 50,
 ) -> str:
-    """获取消息历史"""
+    """获取消息历史（通过 WebSocket LWP 协议）
+    
+    注意：需要先启动 WebSocket 监听才能使用。
+    使用 xianyu_start_listener 启动监听。
+    
+    Args:
+        conversation_id: 对话 ID（从 xianyu_list_conversations 获取）
+        limit: 返回消息数量上限（默认 50）
+    
+    Returns:
+        消息列表，每个消息包含：
+        - message_id: 消息 ID
+        - sender_id: 发送者 ID
+        - sender_name: 发送者昵称
+        - content: 消息内容
+        - timestamp: 消息时间戳
+    """
     client = get_client()
-    result = await client.get_messages(conversation_id=conversation_id, limit=limit)
+    
+    if not conversation_id:
+        return json.dumps({
+            "success": False,
+            "message": "请提供 conversation_id（从 xianyu_list_conversations 获取）"
+        }, ensure_ascii=False)
+    
+    # 检查 WebSocket 是否连接
+    if not client.ws_is_connected():
+        return json.dumps({
+            "success": False,
+            "message": "WebSocket 未连接，请先调用 xianyu_start_listener"
+        }, ensure_ascii=False)
+    
+    # 使用 WebSocket LWP 协议获取消息历史
+    result = await client.ws_client.get_message_history(
+        chat_id=conversation_id,
+        anchor=None,
+        count=limit
+    )
+    
+    if not result.get("success"):
+        return json.dumps(result, ensure_ascii=False)
+    
+    # 格式化返回
     messages = []
     for msg in result.get("messages", []):
-        content = msg.content
-        if content.type == "text":
-            messages.append({
-                "message_id": msg.message_id,
-                "sender_id": msg.sender_id,
-                "content": content.text,
-                "timestamp": msg.timestamp,
-            })
-        elif content.type == "image":
-            messages.append({
-                "message_id": msg.message_id,
-                "sender_id": msg.sender_id,
-                "image_url": content.image_url,
-                "timestamp": msg.timestamp,
-            })
-    return json.dumps({"messages": messages, "has_more": result.get("has_more")}, ensure_ascii=False, indent=2)
+        messages.append({
+            "message_id": msg.get("message_id", ""),
+            "sender_id": msg.get("sender_id", ""),
+            "sender_name": msg.get("sender_name", ""),
+            "content": msg.get("content", ""),
+            "content_type": msg.get("content_type", 1),
+            "timestamp": msg.get("timestamp", 0),
+            "read_status": msg.get("read_status", 0),
+        })
+    
+    return json.dumps({
+        "success": True,
+        "messages": messages,
+        "hasMore": result.get("hasMore", False),
+        "nextCursor": result.get("nextCursor", 0),
+        "count": len(messages),
+    }, ensure_ascii=False, indent=2)
 
 
 @mcp.tool()
@@ -268,14 +346,11 @@ async def xianyu_send_message(
     content: str = "",
     image_url: str = "",
 ) -> str:
-    """发送消息"""
-    client = get_client()
-    result = await client.send_message(
-        conversation_id=conversation_id,
-        content=content,
-        image_url=image_url,
-    )
-    return json.dumps(result, ensure_ascii=False)
+    """发送消息（已失效，请使用 xianyu_ws_send）"""
+    return json.dumps({
+        "success": False,
+        "message": "此 API 已失效，请使用 xianyu_ws_send 直接发送消息"
+    }, ensure_ascii=False)
 
 
 @mcp.tool()

@@ -15,13 +15,21 @@ logger = logging.getLogger(__name__)
 
 
 def generate_mid() -> str:
-    """生成消息 ID"""
-    return str(uuid.uuid4())
+    """生成消息 ID（LWP 格式）"""
+    import random
+    random_part = random.randint(0, 999)
+    timestamp = int(time.time() * 1000)
+    return f"{random_part}{timestamp} 0"
 
 
 def generate_uuid() -> str:
-    """生成 UUID"""
-    return str(uuid.uuid4())
+    """生成 UUID（LWP 格式）"""
+    timestamp = int(time.time() * 1000)
+    random_part = random.randint(0, 9999)
+    return f"-{timestamp}{random_part}"
+
+
+import random
 
 
 class WebSocketClient:
@@ -415,3 +423,237 @@ class WebSocketClient:
             self.ws = None
         
         logger.info("[WebSocket] 客户端已停止")
+    
+    # ==================== LWP RPC 方法 ====================
+    
+    MAX_SAFE_INTEGER = 9007199254740991
+    
+    async def send_rpc(self, lwp_path: str, body: List[Any], timeout: int = 15000) -> Dict[str, Any]:
+        """通过 WebSocket 发送 RPC 请求并等待响应
+        
+        Args:
+            lwp_path: LWP 路由路径（如 /r/Conversation/listNewestPagination）
+            body: 请求参数数组
+            timeout: 超时时间（毫秒）
+        
+        Returns:
+            响应 body 或错误信息
+        """
+        if not self.ws or not self.is_connected:
+            return {"success": False, "error": "WebSocket 未连接"}
+        
+        mid = generate_mid()
+        payload = {
+            "lwp": lwp_path,
+            "headers": {"mid": mid},
+            "body": body
+        }
+        
+        logger.info(f"[WebSocket RPC] 发送: {lwp_path}, MID: {mid}")
+        
+        response_future = asyncio.Future()
+        
+        def check_response(message_str: str):
+            try:
+                response = json.loads(message_str)
+                if response.get("headers", {}).get("mid") == mid:
+                    if response.get("code") in [200, 0]:
+                        response_future.set_result({"success": True, "body": response.get("body", {})})
+                    else:
+                        response_future.set_result({
+                            "success": False,
+                            "error": f"服务器错误: {response.get('message', response.get('code'))}",
+                            "code": response.get("code")
+                        })
+            except Exception:
+                pass
+        
+        # 临时注册消息处理器
+        self._on_message_handlers.append(check_response)
+        
+        try:
+            await self.ws.send(json.dumps(payload))
+            
+            result = await asyncio.wait_for(response_future, timeout=timeout / 1000)
+            return result
+        except asyncio.TimeoutError:
+            return {"success": False, "error": f"请求超时 ({timeout}ms)"}
+        finally:
+            self._on_message_handlers.remove(check_response)
+    
+    async def get_conversation_list(self, max_sort_index: int = None, page_size: int = 20) -> Dict[str, Any]:
+        """获取会话列表（通过 WebSocket LWP 协议）
+        
+        Args:
+            max_sort_index: 分页游标（首次不传，后续传上页返回的 nextSortIndex）
+            page_size: 每页条数
+        
+        Returns:
+            {
+                "success": True,
+                "conversations": [...],
+                "hasMore": bool,
+                "nextSortIndex": int
+            }
+        """
+        if max_sort_index is None:
+            max_sort_index = self.MAX_SAFE_INTEGER
+        
+        result = await self.send_rpc(
+            "/r/Conversation/listNewestPagination",
+            [max_sort_index, page_size]
+        )
+        
+        if not result.get("success"):
+            return result
+        
+        body = result.get("body", {})
+        conversations = []
+        
+        # 解析响应
+        user_convs = body.get("userConvs", [])
+        for item in user_convs:
+            try:
+                user_conv = item.get("singleChatUserConversation", {})
+                last_msg = user_conv.get("lastMessage", {}).get("message", {})
+                
+                cid = last_msg.get("cid", "")
+                chat_id = cid.split("@")[0] if "@" in cid else cid
+                
+                if not chat_id:
+                    continue
+                
+                # 提取最后消息摘要
+                last_message = ""
+                custom = last_msg.get("content", {}).get("custom", {})
+                if custom.get("summary"):
+                    last_message = custom["summary"]
+                
+                # 提取对方用户名
+                peer_name = last_msg.get("extension", {}).get("reminderTitle", "")
+                
+                # 提取商品 ID
+                item_id = ""
+                reminder_url = last_msg.get("extension", {}).get("reminderUrl", "")
+                if reminder_url:
+                    import re
+                    match = re.search(r"itemId=(\d+)", reminder_url)
+                    if match:
+                        item_id = match.group(1)
+                
+                conversations.append({
+                    "cid": chat_id,
+                    "peer_user_name": peer_name,
+                    "last_message": last_message,
+                    "last_message_time": last_msg.get("createAt", 0),
+                    "unread_count": user_conv.get("redPoint", 0),
+                    "sort_index": user_conv.get("modifyTime", 0),
+                    "item_id": item_id,
+                })
+            except Exception as e:
+                logger.warning(f"[WebSocket] 解析会话失败: {e}")
+        
+        # 判断是否有更多
+        has_more = body.get("hasMore", len(conversations) >= page_size)
+        next_sort_index = None
+        if conversations:
+            next_sort_index = conversations[-1].get("sort_index")
+        
+        return {
+            "success": True,
+            "conversations": conversations,
+            "hasMore": has_more,
+            "nextSortIndex": next_sort_index,
+        }
+    
+    async def get_message_history(self, chat_id: str, anchor: int = None, count: int = 20) -> Dict[str, Any]:
+        """获取消息历史（通过 WebSocket LWP 协议）
+        
+        Args:
+            chat_id: 会话 ID（如 123456789）
+            anchor: 翻页锚点（首次不传，后续传 nextCursor）
+            count: 获取条数
+        
+        Returns:
+            {
+                "success": True,
+                "messages": [...],
+                "nextCursor": int,
+                "hasMore": bool
+            }
+        """
+        if not chat_id:
+            return {"success": False, "error": "chat_id 不能为空"}
+        
+        if anchor is None:
+            anchor = self.MAX_SAFE_INTEGER
+        
+        cid = f"{chat_id}@goofish" if "@" not in chat_id else chat_id
+        
+        result = await self.send_rpc(
+            "/r/MessageManager/listUserMessages",
+            [cid, False, anchor, count, False]
+        )
+        
+        if not result.get("success"):
+            return result
+        
+        body = result.get("body", {})
+        messages = []
+        
+        # 解析消息
+        models = body.get("userMessageModels", [])
+        for model in models:
+            try:
+                msg = model.get("message", {})
+                
+                # 提取发送者
+                sender_id = msg.get("extension", {}).get("senderUserId", "")
+                sender_name = msg.get("extension", {}).get("reminderTitle", "")
+                
+                # 解析消息内容
+                content = ""
+                content_type = 0
+                custom = msg.get("content", {}).get("custom", {})
+                
+                if custom.get("summary"):
+                    content = custom["summary"]
+                    content_type = custom.get("contentType", 1)
+                
+                # 尝试从 base64 data 解析
+                raw_data = custom.get("data")
+                if not content and raw_data:
+                    try:
+                        import base64
+                        decoded = base64.b64decode(raw_data).decode("utf-8")
+                        parsed = json.loads(decoded)
+                        if parsed.get("text", {}).get("text"):
+                            content = parsed["text"]["text"]
+                    except Exception:
+                        pass
+                
+                if not content:
+                    continue
+                
+                messages.append({
+                    "message_id": msg.get("messageId", ""),
+                    "sender_id": sender_id,
+                    "sender_name": sender_name,
+                    "content": content,
+                    "content_type": content_type,
+                    "timestamp": msg.get("createAt", 0),
+                    "read_status": model.get("readStatus", 0),
+                })
+            except Exception as e:
+                logger.warning(f"[WebSocket] 解析消息失败: {e}")
+        
+        next_cursor = body.get("nextCursor", 0)
+        has_more = len(messages) >= count and next_cursor > 0
+        
+        return {
+            "success": True,
+            "chat_id": chat_id,
+            "messages": messages,
+            "nextCursor": next_cursor,
+            "hasMore": has_more,
+        }
