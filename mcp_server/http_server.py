@@ -234,13 +234,22 @@ async def xianyu_list_conversations(user_id: str | None = None, limit: int = 20)
         - item_id: 商品 ID
     """
     client = get_client()
-    
-    # 检查 WebSocket 是否连接
-    if not client.ws_is_connected():
-        return json.dumps({
-            "success": False,
-            "message": "WebSocket 未连接，请先调用 xianyu_start_listener"
-        }, ensure_ascii=False)
+
+    status = client.get_ws_status()
+    if not status.get("connected"):
+        current = status.get("status", "disconnected")
+        message = status.get("last_error") or (
+            "WebSocket 正在初始化" if current == "starting" else "WebSocket 未连接"
+        )
+        return json.dumps(
+            {
+                "success": False,
+                "status": current,
+                "message": message,
+                "conversations": [],
+            },
+            ensure_ascii=False,
+        )
     
     # 使用 WebSocket LWP 协议获取对话列表
     result = await client.ws_client.get_conversation_list(max_sort_index=None, page_size=limit)

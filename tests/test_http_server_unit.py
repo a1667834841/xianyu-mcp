@@ -720,3 +720,44 @@ async def test_rest_login_poll_auto_starts_ws_after_confirmed(monkeypatch):
     assert calls == ["login_confirmed"]
     assert payload["ws_auto_start"] is True
     assert payload["ws_status"]["status"] == "starting"
+
+
+@pytest.mark.asyncio
+async def test_list_conversations_returns_starting_status(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    class FakeClient:
+        def get_ws_status(self):
+            return {"connected": False, "status": "starting", "last_error": None, "started_at": "2026-05-03T01:02:03"}
+
+        async def list_conversations(self, limit=20):
+            raise AssertionError("list_conversations must not be called while WS is starting")
+
+    monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
+
+    payload = json.loads(await http_server.xianyu_list_conversations(limit=5))
+
+    assert payload["success"] is False
+    assert payload["status"] == "starting"
+
+
+@pytest.mark.asyncio
+async def test_list_conversations_returns_failed_status(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    class FakeClient:
+        def get_ws_status(self):
+            return {"connected": False, "status": "failed", "last_error": "token failed", "started_at": "2026-05-03T01:02:03"}
+
+        async def list_conversations(self, limit=20):
+            raise AssertionError("list_conversations must not be called when WS failed")
+
+    monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
+
+    payload = json.loads(await http_server.xianyu_list_conversations(limit=5))
+
+    assert payload["success"] is False
+    assert payload["status"] == "failed"
+    assert payload["message"] == "token failed"
