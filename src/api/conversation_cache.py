@@ -25,6 +25,10 @@ class ConversationCache:
         自动管理对话数量上限：
         - 如果超出 max_conversations，删除最早活跃的对话
         """
+        # Validate input
+        if not conv or not conv.conversation_id:
+            return
+        
         # 更新或添加对话
         self._conversations[conv.conversation_id] = conv
         

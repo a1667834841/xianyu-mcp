@@ -110,3 +110,21 @@ def test_update_conversation_duplicate():
     assert len(conversations) == 1
     assert conversations[0].last_message == "新消息"
     assert conversations[0].last_message_time == 2000.0
+
+
+def test_update_conversation_invalid():
+    """测试无效对话不会添加到缓存"""
+    cache = ConversationCache()
+    
+    # 测试空 conversation_id
+    conv_invalid = Conversation(
+        conversation_id="",
+        user_id="user1",
+        user_nick="用户1",
+        last_message="消息",
+        last_message_time=1000.0,
+        unread_count=0
+    )
+    
+    cache.update_conversation(conv_invalid)
+    assert len(cache.get_conversations()) == 0
