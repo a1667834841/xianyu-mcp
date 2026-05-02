@@ -557,6 +557,10 @@ async def rest_login_poll(request):
                 status_code=400,
             )
         result = await client.login_poll(t=t, ck=ck)
+        if result.get("status") == "CONFIRMED":
+            await client.ensure_ws_started(reason="login_confirmed")
+            result["ws_auto_start"] = True
+            result["ws_status"] = client.get_ws_status()
         return JSONResponse(result)
     except RuntimeError as exc:
         message = str(exc)

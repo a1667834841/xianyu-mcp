@@ -686,3 +686,37 @@ async def test_initialize_manager_handles_ensure_ws_exception(monkeypatch):
     monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
 
     await http_server.initialize_manager()
+
+
+@pytest.mark.asyncio
+async def test_rest_login_poll_auto_starts_ws_after_confirmed(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    calls = []
+
+    class FakeRequest:
+        method = "POST"
+
+        async def json(self):
+            return {"t": "123", "ck": "abc"}
+
+    class FakeClient:
+        async def login_poll(self, t, ck):
+            return {"success": True, "status": "CONFIRMED"}
+
+        async def ensure_ws_started(self, reason):
+            calls.append(reason)
+            return {"success": True, "status": "starting", "reason": reason}
+
+        def get_ws_status(self):
+            return {"connected": False, "status": "starting", "last_error": None, "started_at": "2026-05-03T01:02:03"}
+
+    monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
+
+    response = await http_server.rest_login_poll(FakeRequest())
+    payload = json.loads(response.body.decode())
+
+    assert calls == ["login_confirmed"]
+    assert payload["ws_auto_start"] is True
+    assert payload["ws_status"]["status"] == "starting"
