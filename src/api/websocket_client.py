@@ -8,6 +8,8 @@ from typing import Dict, Any, Optional, Callable, List
 import websockets
 
 from .message_codec import encode_custom_message, decode_message, MessageSegment
+from .conversation_cache import ConversationCache
+from .types import ChatMessage, Conversation
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,7 @@ class WebSocketClient:
     def __init__(self, http_client):
         self.http_client = http_client
         self.ws: Optional[websockets.ClientConnection] = None
+        self.cache = ConversationCache()
         self._running = False
         self._connected = False
         self._my_id: str = ""
@@ -271,6 +274,8 @@ class WebSocketClient:
                     
                     logger.info(f"[WebSocket] 收到消息: {sender_name}({sender_id}): {segments[0].content.text if hasattr(segments[0].content, 'text') else ''}")
                     
+                    self._update_cache_from_event(event, segments)
+                    
                     for handler in self._on_message_handlers:
                         try:
                             if asyncio.iscoroutinefunction(handler):
@@ -347,6 +352,41 @@ class WebSocketClient:
         """移除消息处理器"""
         if handler in self._on_message_handlers:
             self._on_message_handlers.remove(handler)
+    
+    def _update_cache_from_event(self, event: Dict[str, Any], segments: List[MessageSegment]):
+        """从事件更新缓存"""
+        conv = Conversation(
+            conversation_id=event["cid"],
+            user_id=event["sender_id"],
+            user_nick=event["sender_name"],
+            last_message=self._extract_message_text(segments),
+            last_message_time=event["timestamp"],
+            unread_count=0,
+        )
+        self.cache.update_conversation(conv)
+        
+        msg = ChatMessage(
+            message_id="",
+            conversation_id=event["cid"],
+            sender_id=event["sender_id"],
+            receiver_id=self._my_id,
+            content=segments[0].content if segments else None,
+            timestamp=event["timestamp"],
+            is_read=False,
+        )
+        self.cache.add_message(event["cid"], msg)
+    
+    def _extract_message_text(self, segments: List[MessageSegment]) -> str:
+        """提取消息文本摘要"""
+        if not segments:
+            return "[未知消息类型]"
+        content = segments[0].content
+        if hasattr(content, 'text') and content.text:
+            return content.text[:50]
+        elif hasattr(content, 'image_url') and content.image_url:
+            return "[图片]"
+        else:
+            return "[未知消息类型]"
     
     @property
     def is_connected(self) -> bool:
