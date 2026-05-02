@@ -405,7 +405,7 @@ class HttpClient:
     
     async def get_access_token(self) -> str:
         """获取 WebSocket accessToken"""
-        api = "mtop.taobao.idlemessage.pc.login.token/1.0"
+        api = "mtop.taobao.idlemessage.pc.login.token"
         data = {
             "appKey": "444e9908a51d1cb236a27862abc769c9",
             "deviceId": self.device_id or "default_device",
