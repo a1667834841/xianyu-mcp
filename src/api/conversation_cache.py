@@ -82,9 +82,8 @@ class ConversationCache:
             return []
         
         messages = self._messages[conv_id]
-        # 按时间降序排序（最新的在前）
-        messages.sort(key=lambda m: m.timestamp, reverse=True)
-        return messages[:limit]
+        # Use sorted() to avoid mutating the internal list
+        return sorted(messages, key=lambda m: m.timestamp, reverse=True)[:limit]
 
     def get_conversation_by_user(self, user_id: str) -> Optional[Conversation]:
         """按 user_id 查找对话"""
