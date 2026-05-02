@@ -117,7 +117,7 @@ class XianyuApiClient:
         post_price: float = 0,
         **kwargs
     ) -> Dict[str, Any]:
-        """发布商品
+        """发布商品，API 优先，失败降级浏览器
         
         Args:
             images_paths: 图片路径列表
@@ -126,6 +126,7 @@ class XianyuApiClient:
             shipping: 物流选项
             self_pickup: 是否支持自提
             post_price: 物流费用
+            item_url: 可选的现有商品URL（用于复制发布）
         """
         if not self.http_client:
             return {"success": False, "message": "客户端未初始化"}
@@ -136,14 +137,27 @@ class XianyuApiClient:
         if not title:
             return {"success": False, "message": "需要提供商品标题"}
         
-        return await self.http_client.publish(
-            images_paths=images_paths,
-            title=title,
-            price=price,
-            shipping=shipping,
-            self_pickup=self_pickup,
-            post_price=post_price,
-        )
+        try:
+            result = await self.http_client.publish(
+                images_paths=images_paths,
+                title=title,
+                price=price,
+                shipping=shipping,
+                self_pickup=self_pickup,
+                post_price=post_price,
+            )
+            if result.get("success"):
+                result["method"] = "http"
+                return result
+        except Exception as e:
+            logger.warning(f"API 发布失败，降级到浏览器: {e}")
+        
+        item_url = kwargs.get("item_url", "")
+        if self.browser_bridge and item_url:
+            kwargs_copy = {k: v for k, v in kwargs.items() if k != "item_url"}
+            return await self.browser_bridge.publish_via_browser(item_url=item_url, **kwargs_copy)
+        
+        return {"success": False, "method": "none"}
     
     async def create_conversation(self, item_url: str, seller_id: str = "") -> str:
         """创建对话"""

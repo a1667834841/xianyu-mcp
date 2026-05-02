@@ -39,6 +39,28 @@ class TestXianyuApiClient:
         assert "标题" in result["message"]
 
     @pytest.mark.asyncio
+    async def test_publish_api_first_then_fallback(self):
+        """测试发布优先使用 API，失败后降级浏览器"""
+        client = XianyuApiClient()
+        
+        with patch.object(client.http_client, "publish", new_callable=AsyncMock) as mock_api:
+            mock_api.side_effect = Exception("API failed")
+            
+            with patch.object(client.browser_bridge, "publish_via_browser", new_callable=AsyncMock) as mock_browser:
+                mock_browser.return_value = {"success": True, "method": "browser"}
+                
+                result = await client.publish(
+                    images_paths=["/path/to/image.jpg"],
+                    title="测试商品",
+                    item_url="http://example.com/item/123"
+                )
+                
+                mock_api.assert_called_once()
+                mock_browser.assert_called_once()
+                assert result["success"] is True
+                assert result["method"] == "browser"
+
+    @pytest.mark.asyncio
     async def test_refresh_token_api_first_then_fallback(self):
         """测试刷新 Token 优先使用 API，失败后降级浏览器"""
         client = XianyuApiClient()
