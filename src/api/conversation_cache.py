@@ -20,8 +20,25 @@ class ConversationCache:
         self.max_messages_per_conv = max_messages_per_conv
 
     def update_conversation(self, conv: Conversation) -> None:
-        """更新或添加对话"""
-        raise NotImplementedError
+        """更新或添加对话
+        
+        自动管理对话数量上限：
+        - 如果超出 max_conversations，删除最早活跃的对话
+        """
+        # 更新或添加对话
+        self._conversations[conv.conversation_id] = conv
+        
+        # 检查容量限制
+        if len(self._conversations) > self.max_conversations:
+            # 找到最早活跃的对话（last_message_time 最小的）
+            oldest_conv_id = min(
+                self._conversations.keys(),
+                key=lambda k: self._conversations[k].last_message_time
+            )
+            # 删除最早的对话及其消息
+            del self._conversations[oldest_conv_id]
+            if oldest_conv_id in self._messages:
+                del self._messages[oldest_conv_id]
 
     def add_message(self, conv_id: str, msg: ChatMessage) -> None:
         """添加消息到对话"""
@@ -29,7 +46,10 @@ class ConversationCache:
 
     def get_conversations(self, limit: int = 20) -> List[Conversation]:
         """获取对话列表（按最后消息时间降序排序）"""
-        return []
+        conversations = list(self._conversations.values())
+        # 按最后消息时间降序排序（最新的在前）
+        conversations.sort(key=lambda c: c.last_message_time, reverse=True)
+        return conversations[:limit]
 
     def get_messages(self, conv_id: str, limit: int = 50) -> List[ChatMessage]:
         """获取对话的消息列表（按时间降序排序）"""
