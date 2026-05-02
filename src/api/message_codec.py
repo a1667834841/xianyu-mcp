@@ -55,9 +55,11 @@ def encode_message(content: str, image_url: str = "") -> Tuple[Dict[str, Any], i
 
 
 def encode_custom_message(content: str, image_url: str = "") -> str:
-    """编码为 custom 格式（base64）"""
-    payload, custom_type = encode_message(content, image_url)
-    # 改为包装为数组，匹配 decode_message 的期望
+    """编码为 custom 格式（base64），匹配 decode_message contentType 101 的期望格式"""
+    if image_url:
+        payload = {"type": "image", "image_url": image_url, "width": 100, "height": 100}
+    else:
+        payload = {"type": "text", "text": content}
     return base64.b64encode(json.dumps([payload]).encode("utf-8")).decode("utf-8")
 
 
