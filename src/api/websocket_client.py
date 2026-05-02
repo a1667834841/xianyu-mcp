@@ -1,9 +1,11 @@
-"""WebSocket 客户端 - 基于 myfish 协议实现实时消息收发"""
+"""WebSocket 客户端 - 支持并发 RPC 请求和消息监听"""
 import asyncio
 import json
 import time
-import uuid
 import logging
+import random
+import base64
+import re
 from typing import Dict, Any, Optional, Callable, List
 import websockets
 
@@ -16,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 def generate_mid() -> str:
     """生成消息 ID（LWP 格式）"""
-    import random
     random_part = random.randint(0, 999)
     timestamp = int(time.time() * 1000)
     return f"{random_part}{timestamp} 0"
@@ -29,25 +30,27 @@ def generate_uuid() -> str:
     return f"-{timestamp}{random_part}"
 
 
-import random
-
-
 class WebSocketClient:
-    """闲鱼 WebSocket 客户端 - myfish 协议"""
+    """闲鱼 WebSocket 客户端 - 支持并发 RPC 请求"""
     
     WS_URL = "wss://wss-goofish.dingtalk.com/"
     APP_KEY = "444e9908a51d1cb236a27862abc769c9"
     HEARTBEAT_INTERVAL = 15
+    MAX_SAFE_INTEGER = 9007199254740991
     
     def __init__(self, http_client):
         self.http_client = http_client
         self.ws: Optional[websockets.ClientConnection] = None
         self.cache = ConversationCache()
+        
         self._running = False
         self._connected = False
         self._my_id: str = ""
         self._device_id: str = ""
+        
         self._on_message_handlers: List[Callable] = []
+        self._pending_requests: Dict[str, asyncio.Future] = {}  # MID -> Future
+        
         self._bg_tasks: List[asyncio.Task] = []
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 10
@@ -88,53 +91,59 @@ class WebSocketClient:
             logger.error(f"ACK 发送失败: {e}")
     
     async def connect(self) -> bool:
-        """连接 WebSocket 并注册"""
+        """连接 WebSocket（快速返回，后台初始化）"""
         try:
             headers = self._get_headers()
             
             logger.info("[WebSocket] 尝试连接...")
-            async with websockets.connect(
+            self.ws = await websockets.connect(
                 self.WS_URL,
                 additional_headers=headers,
                 ping_interval=None,
-            ) as ws:
-                self.ws = ws
-                self._running = True
-                self._reconnect_attempts = 0
-                
-                if not await self._init_connection():
-                    self._running = False
-                    return False
-                
-                self._connected = True
-                logger.info("[WebSocket] 连接并注册成功")
-                
-                self._bg_tasks.append(asyncio.create_task(self._heart_beat_loop()))
-                self._bg_tasks.append(asyncio.create_task(self._keep_token_alive_loop()))
-                
-                async for message_str in ws:
-                    if not self._running:
-                        break
-                    await self._handle_raw_message(message_str)
-        
-        except websockets.ConnectionClosed:
-            logger.warning("[WebSocket] 连接断开，3秒后重连...")
-            self._connected = False
-            if self._running and self._reconnect_attempts < self._max_reconnect_attempts:
-                await asyncio.sleep(3)
-                self._reconnect_attempts += 1
-                return await self.connect()
+            )
+            
+            self._running = True
+            self._reconnect_attempts = 0
+            
+            # 启动后台任务：消息循环 + 异步初始化 + 心跳
+            self._bg_tasks.append(asyncio.create_task(self._message_loop()))
+            self._bg_tasks.append(asyncio.create_task(self._async_init()))
+            self._bg_tasks.append(asyncio.create_task(self._heart_beat_loop()))
+            self._bg_tasks.append(asyncio.create_task(self._keep_token_alive_loop()))
+            
+            logger.info("[WebSocket] 已连接，后台初始化中...")
+            return True
         
         except Exception as e:
-            logger.error(f"[WebSocket] 错误: {e}")
+            logger.error(f"[WebSocket] 连接错误: {e}")
             self._running = False
             self._connected = False
+            self.ws = None
             return False
-        
-        return True
+    
+    async def _async_init(self):
+        """后台异步初始化"""
+        try:
+            # 等待一小段时间让消息循环启动
+            await asyncio.sleep(0.5)
+            
+            if not await self._init_connection():
+                logger.error("[WebSocket] 初始化失败")
+                self._running = False
+                if self.ws:
+                    await self.ws.close()
+                self.ws = None
+                return
+            
+            self._connected = True
+            logger.info("[WebSocket] 初始化成功")
+            
+        except Exception as e:
+            logger.error(f"[WebSocket] 异步初始化错误: {e}")
+            self._running = False
     
     async def _init_connection(self) -> bool:
-        """初始化 WebSocket 连接 - 发送注册和同步消息"""
+        """初始化连接 - 发送注册和同步消息"""
         if not self.ws:
             return False
         
@@ -148,6 +157,7 @@ class WebSocketClient:
         self._my_id = self.http_client.cookies.get("unb", "")
         self._device_id = self.http_client.device_id
         
+        # 发送注册消息
         reg_msg = {
             "lwp": "/reg",
             "headers": {
@@ -165,6 +175,7 @@ class WebSocketClient:
         await self.ws.send(json.dumps(reg_msg))
         logger.info("[WebSocket] 发送注册消息")
         
+        # 发送同步状态
         current_time = int(time.time() * 1000)
         sync_msg = {
             "lwp": "/r/SyncStatus/ackDiff",
@@ -187,8 +198,54 @@ class WebSocketClient:
         
         return True
     
+    async def _message_loop(self):
+        """消息循环（后台任务）"""
+        try:
+            while self._running and self.ws:
+                try:
+                    message_str = await asyncio.wait_for(self.ws.recv(), timeout=1.0)
+                    await self._handle_raw_message(message_str)
+                except asyncio.TimeoutError:
+                    continue
+                except websockets.ConnectionClosed:
+                    logger.warning("[WebSocket] 连接断开")
+                    self._connected = False
+                    if self._running:
+                        await asyncio.sleep(3)
+                        await self._reconnect()
+                    break
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"[WebSocket] 消息循环错误: {e}")
+    
+    async def _reconnect(self):
+        """重连"""
+        if self._reconnect_attempts >= self._max_reconnect_attempts:
+            logger.error("[WebSocket] 达到最大重连次数")
+            self._running = False
+            return
+        
+        self._reconnect_attempts += 1
+        logger.info(f"[WebSocket] 第 {self._reconnect_attempts} 次重连...")
+        
+        # 关闭旧连接
+        if self.ws:
+            try:
+                await self.ws.close()
+            except:
+                pass
+            self.ws = None
+        
+        self._connected = False
+        
+        # 重新连接
+        if await self.connect():
+            self._reconnect_attempts = 0
+            logger.info("[WebSocket] 重连成功")
+    
     async def _heart_beat_loop(self):
-        """心跳循环 - 每 15 秒发送心跳"""
+        """心跳循环"""
         try:
             while self._running:
                 if self.ws and self._connected:
@@ -205,7 +262,7 @@ class WebSocketClient:
             logger.error(f"[WebSocket] 心跳出错: {e}")
     
     async def _keep_token_alive_loop(self):
-        """保持 token 有效 - 每 10 分钟刷新 accessToken"""
+        """保持 token 有效"""
         try:
             while self._running:
                 await asyncio.sleep(600)
@@ -222,10 +279,32 @@ class WebSocketClient:
         """处理原始消息"""
         try:
             message_dict = json.loads(message_str)
+            
+            # 检查是否是 RPC 响应
+            mid = message_dict.get("headers", {}).get("mid", "")
+            if mid in self._pending_requests:
+                future = self._pending_requests[mid]
+                if message_dict.get("code") in [200, 0]:
+                    future.set_result({
+                        "success": True,
+                        "body": message_dict.get("body", {}),
+                        "raw": message_dict
+                    })
+                else:
+                    future.set_result({
+                        "success": False,
+                        "error": f"服务器错误: {message_dict.get('message', message_dict.get('code'))}",
+                        "code": message_dict.get("code"),
+                        "raw": message_dict
+                    })
+                del self._pending_requests[mid]
+                logger.info(f"[WebSocket RPC] 收到响应 MID={mid}")
+                return
+            
+            # 发送 ACK
             await self._send_ack(message_dict)
             
             lwp = message_dict.get("lwp", "")
-            
             if lwp == "/!":
                 logger.debug("[WebSocket] 收到心跳响应")
                 return
@@ -299,6 +378,205 @@ class WebSocketClient:
         except Exception as e:
             logger.error(f"[WebSocket] 处理原始消息错误: {e}")
     
+    async def send_rpc(self, lwp_path: str, body: List[Any], timeout: int = 15000) -> Dict[str, Any]:
+        """通过 WebSocket 发送 RPC 请求并等待响应"""
+        if not self.ws or not self._connected:
+            return {"success": False, "error": "WebSocket 未连接"}
+        
+        mid = generate_mid()
+        payload = {
+            "lwp": lwp_path,
+            "headers": {"mid": mid},
+            "body": body
+        }
+        
+        logger.info(f"[WebSocket RPC] 发送: {lwp_path}, MID: {mid}")
+        
+        # 创建 Future 等待响应
+        future = asyncio.Future()
+        self._pending_requests[mid] = future
+        
+        try:
+            await self.ws.send(json.dumps(payload))
+            
+            result = await asyncio.wait_for(future, timeout=timeout / 1000)
+            return result
+        except asyncio.TimeoutError:
+            del self._pending_requests[mid]
+            return {"success": False, "error": f"请求超时 ({timeout}ms)"}
+        except Exception as e:
+            del self._pending_requests[mid]
+            return {"success": False, "error": str(e)}
+    
+    async def get_conversation_list(self, max_sort_index: int = None, page_size: int = 20) -> Dict[str, Any]:
+        """获取会话列表（通过 WebSocket LWP 协议）"""
+        if max_sort_index is None:
+            max_sort_index = self.MAX_SAFE_INTEGER
+        
+        result = await self.send_rpc(
+            "/r/Conversation/listNewestPagination",
+            [max_sort_index, page_size]
+        )
+        
+        if not result.get("success"):
+            return result
+        
+        body = result.get("body", {})
+        conversations = []
+        
+        user_convs = body.get("userConvs", [])
+        for item in user_convs:
+            try:
+                user_conv = item.get("singleChatUserConversation", {})
+                last_msg = user_conv.get("lastMessage", {}).get("message", {})
+                
+                cid = last_msg.get("cid", "")
+                chat_id = cid.split("@")[0] if "@" in cid else cid
+                
+                if not chat_id:
+                    continue
+                
+                last_message = ""
+                custom = last_msg.get("content", {}).get("custom", {})
+                if custom.get("summary"):
+                    last_message = custom["summary"]
+                
+                peer_name = last_msg.get("extension", {}).get("reminderTitle", "")
+                
+                item_id = ""
+                reminder_url = last_msg.get("extension", {}).get("reminderUrl", "")
+                if reminder_url:
+                    match = re.search(r"itemId=(\d+)", reminder_url)
+                    if match:
+                        item_id = match.group(1)
+                
+                conv_data = {
+                    "cid": chat_id,
+                    "peer_user_name": peer_name,
+                    "last_message": last_message,
+                    "last_message_time": last_msg.get("createAt", 0),
+                    "unread_count": user_conv.get("redPoint", 0),
+                    "sort_index": user_conv.get("modifyTime", 0),
+                    "item_id": item_id,
+                }
+                
+                conversations.append(conv_data)
+                
+                # 更新缓存
+                conv = Conversation(
+                    conversation_id=chat_id,
+                    user_id=chat_id,
+                    user_nick=peer_name,
+                    last_message=last_message,
+                    last_message_time=last_msg.get("createAt", 0) / 1000 if last_msg.get("createAt") else 0,
+                    unread_count=user_conv.get("redPoint", 0),
+                )
+                self.cache.update_conversation(conv)
+            
+            except Exception as e:
+                logger.warning(f"[WebSocket] 解析会话失败: {e}")
+        
+        has_more = body.get("hasMore", len(conversations) >= page_size)
+        next_sort_index = None
+        if conversations:
+            next_sort_index = conversations[-1].get("sort_index")
+        
+        return {
+            "success": True,
+            "conversations": conversations,
+            "hasMore": has_more,
+            "nextSortIndex": next_sort_index,
+        }
+    
+    async def get_message_history(self, chat_id: str, anchor: int = None, count: int = 20) -> Dict[str, Any]:
+        """获取消息历史（通过 WebSocket LWP 协议）"""
+        if not chat_id:
+            return {"success": False, "error": "chat_id 不能为空"}
+        
+        if anchor is None:
+            anchor = self.MAX_SAFE_INTEGER
+        
+        cid = f"{chat_id}@goofish" if "@" not in chat_id else chat_id
+        
+        result = await self.send_rpc(
+            "/r/MessageManager/listUserMessages",
+            [cid, False, anchor, count, False]
+        )
+        
+        if not result.get("success"):
+            return result
+        
+        body = result.get("body", {})
+        messages = []
+        
+        models = body.get("userMessageModels", [])
+        for model in models:
+            try:
+                msg = model.get("message", {})
+                
+                sender_id = msg.get("extension", {}).get("senderUserId", "")
+                sender_name = msg.get("extension", {}).get("reminderTitle", "")
+                
+                content = ""
+                content_type = 0
+                custom = msg.get("content", {}).get("custom", {})
+                
+                if custom.get("summary"):
+                    content = custom["summary"]
+                    content_type = custom.get("contentType", 1)
+                
+                raw_data = custom.get("data")
+                if not content and raw_data:
+                    try:
+                        decoded = base64.b64decode(raw_data).decode("utf-8")
+                        parsed = json.loads(decoded)
+                        if parsed.get("text", {}).get("text"):
+                            content = parsed["text"]["text"]
+                    except Exception:
+                        pass
+                
+                if not content:
+                    continue
+                
+                msg_data = {
+                    "message_id": msg.get("messageId", ""),
+                    "sender_id": sender_id,
+                    "sender_name": sender_name,
+                    "content": content,
+                    "content_type": content_type,
+                    "timestamp": msg.get("createAt", 0),
+                    "read_status": model.get("readStatus", 0),
+                }
+                
+                messages.append(msg_data)
+                
+                # 更新缓存
+                from .types import TextContent
+                chat_msg = ChatMessage(
+                    message_id=msg.get("messageId", ""),
+                    conversation_id=chat_id,
+                    sender_id=sender_id,
+                    receiver_id=self._my_id,
+                    content=TextContent(type="text", text=content),
+                    timestamp=msg.get("createAt", 0) / 1000 if msg.get("createAt") else 0,
+                    is_read=model.get("readStatus", 0) == 1,
+                )
+                self.cache.add_message(chat_id, chat_msg)
+            
+            except Exception as e:
+                logger.warning(f"[WebSocket] 解析消息失败: {e}")
+        
+        next_cursor = body.get("nextCursor", 0)
+        has_more = len(messages) >= count and next_cursor > 0
+        
+        return {
+            "success": True,
+            "chat_id": chat_id,
+            "messages": messages,
+            "nextCursor": next_cursor,
+            "hasMore": has_more,
+        }
+    
     async def send_message(
         self,
         target_id: str,
@@ -306,14 +584,7 @@ class WebSocketClient:
         image_url: str = "",
         cid: str = "",
     ) -> bool:
-        """发送消息
-        
-        Args:
-            target_id: 目标用户 ID（卖家或买家）
-            content: 文本消息内容
-            image_url: 图片 URL（可选）
-            cid: 对话 ID（可选，默认使用 target_id）
-        """
+        """发送消息"""
         if not self.ws or not self._running:
             logger.error("[WebSocket] WebSocket 未连接")
             return False
@@ -406,6 +677,12 @@ class WebSocketClient:
         self._running = False
         self._connected = False
         
+        # 清理 pending requests
+        for mid, future in self._pending_requests.items():
+            future.cancel()
+        self._pending_requests.clear()
+        
+        # 取消后台任务
         for task in self._bg_tasks:
             task.cancel()
             try:
@@ -423,237 +700,3 @@ class WebSocketClient:
             self.ws = None
         
         logger.info("[WebSocket] 客户端已停止")
-    
-    # ==================== LWP RPC 方法 ====================
-    
-    MAX_SAFE_INTEGER = 9007199254740991
-    
-    async def send_rpc(self, lwp_path: str, body: List[Any], timeout: int = 15000) -> Dict[str, Any]:
-        """通过 WebSocket 发送 RPC 请求并等待响应
-        
-        Args:
-            lwp_path: LWP 路由路径（如 /r/Conversation/listNewestPagination）
-            body: 请求参数数组
-            timeout: 超时时间（毫秒）
-        
-        Returns:
-            响应 body 或错误信息
-        """
-        if not self.ws or not self.is_connected:
-            return {"success": False, "error": "WebSocket 未连接"}
-        
-        mid = generate_mid()
-        payload = {
-            "lwp": lwp_path,
-            "headers": {"mid": mid},
-            "body": body
-        }
-        
-        logger.info(f"[WebSocket RPC] 发送: {lwp_path}, MID: {mid}")
-        
-        response_future = asyncio.Future()
-        
-        def check_response(message_str: str):
-            try:
-                response = json.loads(message_str)
-                if response.get("headers", {}).get("mid") == mid:
-                    if response.get("code") in [200, 0]:
-                        response_future.set_result({"success": True, "body": response.get("body", {})})
-                    else:
-                        response_future.set_result({
-                            "success": False,
-                            "error": f"服务器错误: {response.get('message', response.get('code'))}",
-                            "code": response.get("code")
-                        })
-            except Exception:
-                pass
-        
-        # 临时注册消息处理器
-        self._on_message_handlers.append(check_response)
-        
-        try:
-            await self.ws.send(json.dumps(payload))
-            
-            result = await asyncio.wait_for(response_future, timeout=timeout / 1000)
-            return result
-        except asyncio.TimeoutError:
-            return {"success": False, "error": f"请求超时 ({timeout}ms)"}
-        finally:
-            self._on_message_handlers.remove(check_response)
-    
-    async def get_conversation_list(self, max_sort_index: int = None, page_size: int = 20) -> Dict[str, Any]:
-        """获取会话列表（通过 WebSocket LWP 协议）
-        
-        Args:
-            max_sort_index: 分页游标（首次不传，后续传上页返回的 nextSortIndex）
-            page_size: 每页条数
-        
-        Returns:
-            {
-                "success": True,
-                "conversations": [...],
-                "hasMore": bool,
-                "nextSortIndex": int
-            }
-        """
-        if max_sort_index is None:
-            max_sort_index = self.MAX_SAFE_INTEGER
-        
-        result = await self.send_rpc(
-            "/r/Conversation/listNewestPagination",
-            [max_sort_index, page_size]
-        )
-        
-        if not result.get("success"):
-            return result
-        
-        body = result.get("body", {})
-        conversations = []
-        
-        # 解析响应
-        user_convs = body.get("userConvs", [])
-        for item in user_convs:
-            try:
-                user_conv = item.get("singleChatUserConversation", {})
-                last_msg = user_conv.get("lastMessage", {}).get("message", {})
-                
-                cid = last_msg.get("cid", "")
-                chat_id = cid.split("@")[0] if "@" in cid else cid
-                
-                if not chat_id:
-                    continue
-                
-                # 提取最后消息摘要
-                last_message = ""
-                custom = last_msg.get("content", {}).get("custom", {})
-                if custom.get("summary"):
-                    last_message = custom["summary"]
-                
-                # 提取对方用户名
-                peer_name = last_msg.get("extension", {}).get("reminderTitle", "")
-                
-                # 提取商品 ID
-                item_id = ""
-                reminder_url = last_msg.get("extension", {}).get("reminderUrl", "")
-                if reminder_url:
-                    import re
-                    match = re.search(r"itemId=(\d+)", reminder_url)
-                    if match:
-                        item_id = match.group(1)
-                
-                conversations.append({
-                    "cid": chat_id,
-                    "peer_user_name": peer_name,
-                    "last_message": last_message,
-                    "last_message_time": last_msg.get("createAt", 0),
-                    "unread_count": user_conv.get("redPoint", 0),
-                    "sort_index": user_conv.get("modifyTime", 0),
-                    "item_id": item_id,
-                })
-            except Exception as e:
-                logger.warning(f"[WebSocket] 解析会话失败: {e}")
-        
-        # 判断是否有更多
-        has_more = body.get("hasMore", len(conversations) >= page_size)
-        next_sort_index = None
-        if conversations:
-            next_sort_index = conversations[-1].get("sort_index")
-        
-        return {
-            "success": True,
-            "conversations": conversations,
-            "hasMore": has_more,
-            "nextSortIndex": next_sort_index,
-        }
-    
-    async def get_message_history(self, chat_id: str, anchor: int = None, count: int = 20) -> Dict[str, Any]:
-        """获取消息历史（通过 WebSocket LWP 协议）
-        
-        Args:
-            chat_id: 会话 ID（如 123456789）
-            anchor: 翻页锚点（首次不传，后续传 nextCursor）
-            count: 获取条数
-        
-        Returns:
-            {
-                "success": True,
-                "messages": [...],
-                "nextCursor": int,
-                "hasMore": bool
-            }
-        """
-        if not chat_id:
-            return {"success": False, "error": "chat_id 不能为空"}
-        
-        if anchor is None:
-            anchor = self.MAX_SAFE_INTEGER
-        
-        cid = f"{chat_id}@goofish" if "@" not in chat_id else chat_id
-        
-        result = await self.send_rpc(
-            "/r/MessageManager/listUserMessages",
-            [cid, False, anchor, count, False]
-        )
-        
-        if not result.get("success"):
-            return result
-        
-        body = result.get("body", {})
-        messages = []
-        
-        # 解析消息
-        models = body.get("userMessageModels", [])
-        for model in models:
-            try:
-                msg = model.get("message", {})
-                
-                # 提取发送者
-                sender_id = msg.get("extension", {}).get("senderUserId", "")
-                sender_name = msg.get("extension", {}).get("reminderTitle", "")
-                
-                # 解析消息内容
-                content = ""
-                content_type = 0
-                custom = msg.get("content", {}).get("custom", {})
-                
-                if custom.get("summary"):
-                    content = custom["summary"]
-                    content_type = custom.get("contentType", 1)
-                
-                # 尝试从 base64 data 解析
-                raw_data = custom.get("data")
-                if not content and raw_data:
-                    try:
-                        import base64
-                        decoded = base64.b64decode(raw_data).decode("utf-8")
-                        parsed = json.loads(decoded)
-                        if parsed.get("text", {}).get("text"):
-                            content = parsed["text"]["text"]
-                    except Exception:
-                        pass
-                
-                if not content:
-                    continue
-                
-                messages.append({
-                    "message_id": msg.get("messageId", ""),
-                    "sender_id": sender_id,
-                    "sender_name": sender_name,
-                    "content": content,
-                    "content_type": content_type,
-                    "timestamp": msg.get("createAt", 0),
-                    "read_status": model.get("readStatus", 0),
-                })
-            except Exception as e:
-                logger.warning(f"[WebSocket] 解析消息失败: {e}")
-        
-        next_cursor = body.get("nextCursor", 0)
-        has_more = len(messages) >= count and next_cursor > 0
-        
-        return {
-            "success": True,
-            "chat_id": chat_id,
-            "messages": messages,
-            "nextCursor": next_cursor,
-            "hasMore": has_more,
-        }

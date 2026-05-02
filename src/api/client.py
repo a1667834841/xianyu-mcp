@@ -141,10 +141,26 @@ class XianyuApiClient:
         )
     
     async def list_conversations(self, limit: int = 20, offset: int = 0) -> List[Conversation]:
-        """获取对话列表"""
-        if not self.http_client:
-            return []
-        return await self.http_client.list_conversations(limit=limit, offset=offset)
+        """获取对话列表（通过 WebSocket LWP）"""
+        if not self.ws_client or not self.ws_client.is_connected:
+            # WebSocket 未连接，返回缓存
+            cached = self.ws_client.cache.get_conversations(limit=limit)
+            return cached
+        
+        result = await self.ws_client.get_conversation_list(page_size=limit)
+        if result.get("success"):
+            conversations = result.get("conversations", [])
+            return [Conversation(
+                conversation_id=c["cid"],
+                user_id=c["cid"],
+                user_nick=c.get("peer_user_name", ""),
+                last_message=c.get("last_message", ""),
+                last_message_time=c.get("last_message_time", 0) / 1000 if c.get("last_message_time") else 0,
+                unread_count=c.get("unread_count", 0),
+            ) for c in conversations]
+        
+        # 失败时返回缓存
+        return self.ws_client.cache.get_conversations(limit=limit)
     
     async def get_messages(
         self, 
@@ -152,14 +168,31 @@ class XianyuApiClient:
         limit: int = 50,
         before_timestamp: Optional[int] = None
     ) -> Dict[str, Any]:
-        """获取消息历史"""
-        if not self.http_client:
-            return {"messages": [], "has_more": False}
-        return await self.http_client.get_message_history(
-            conversation_id=conversation_id,
-            limit=limit,
-            before_timestamp=before_timestamp,
+        """获取消息历史（通过 WebSocket LWP）"""
+        if not self.ws_client or not self.ws_client.is_connected:
+            # WebSocket 未连接，返回缓存
+            cached = self.ws_client.cache.get_messages(conversation_id, limit=limit)
+            return {"messages": cached, "has_more": False, "source": "cache"}
+        
+        anchor = before_timestamp if before_timestamp else None
+        result = await self.ws_client.get_message_history(
+            chat_id=conversation_id,
+            anchor=anchor,
+            count=limit
         )
+        
+        if result.get("success"):
+            messages = result.get("messages", [])
+            return {
+                "messages": messages,
+                "has_more": result.get("hasMore", False),
+                "next_cursor": result.get("nextCursor"),
+                "source": "websocket"
+            }
+        
+        # 失败时返回缓存
+        cached = self.ws_client.cache.get_messages(conversation_id, limit=limit)
+        return {"messages": cached, "has_more": False, "source": "cache"}
     
     async def send_message(
         self, 

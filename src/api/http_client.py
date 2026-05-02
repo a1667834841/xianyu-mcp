@@ -199,6 +199,11 @@ class HttpClient:
                 else:
                     logger.error("[HttpClient] 验证失败，返回原错误")
             
+            # 检测需要重新登录
+            elif retry_on_captcha and self._need_relogin(result):
+                logger.warning("[HttpClient] 需要重新登录（风控触发）")
+                # 不自动处理，返回错误让用户手动登录
+            
             return result
             
         except Exception as e:
@@ -208,6 +213,8 @@ class HttpClient:
     def _need_captcha(self, resp: Dict[str, Any]) -> bool:
         """检测是否需要滑块验证
         
+        注意：RGV587_ERROR 可能是登录过期，不是验证码
+        
         Args:
             resp: API 响应
             
@@ -216,15 +223,39 @@ class HttpClient:
         """
         keywords = [
             'FAIL_SYS_USER_VALIDATE',
-            'RGV587_ERROR::SM::请稍后重试',
-            'FAIL_SYS_TOKEN_EXOIRED',
         ]
         
+        # 检查是否有验证码 URL（punish 参数）
+        url = resp.get('data', {}).get('url', '')
+        if 'punish' in url and 'captcha' in url:
+            return True
+        
+        # 检查 ret 数组
         ret = resp.get('ret', [])
         ret_str = str(ret)
         
         for keyword in keywords:
             if keyword in ret_str:
+                return True
+        
+        return False
+    
+    def _need_relogin(self, resp: Dict[str, Any]) -> bool:
+        """检测是否需要重新登录
+        
+        Args:
+            resp: API 响应
+            
+        Returns:
+            bool: 是否需要重新登录
+        """
+        ret = resp.get('ret', [])
+        ret_str = str(ret)
+        
+        # RGV587_ERROR 且包含登录页面 URL
+        if 'RGV587_ERROR' in ret_str:
+            url = resp.get('data', {}).get('url', '')
+            if 'mini_login.htm' in url:
                 return True
         
         return False

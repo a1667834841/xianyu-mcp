@@ -15,23 +15,28 @@ class SliderSolver:
     参考 xianyu-super-butler 的轨迹生成算法
     """
     
-    # 滑块元素选择器（阿里云验证码）
+    # 滑块元素选择器（阿里云验证码 - 参考 xianyu-super-butler）
     SLIDER_BUTTON_SELECTORS = [
-        "#nc_1_n1z",  # 滑块按钮
-        ".nc_scale div",  # 滑块按钮（备用）
-        "span[class*='btn']",  # 滑块按钮（通用）
+        "#nc_1_n1z",  # 滑块按钮（最常见）
+        ".nc_iconfont",  # 滑块按钮（备用）
+        ".btn_slide",  # 滑块按钮（通用）
+        "#scratch-captcha-btn",  # 刮刮乐类型
+        "[class*='slider']",
     ]
     
     SLIDER_TRACK_SELECTORS = [
-        ".nc_scale",  # 滑轨
-        "#nc_1__scale",  # 滑轨（备用）
-        "div[class*='scale']",  # 滑轨（通用）
+        "#nc_1_n1t",  # 滑轨（最常见）
+        ".nc_scale",  # 滑轨（备用）
+        ".nc_wrapper",  # 滑轨容器
+        "[class*='scale']",
     ]
     
     CAPTCHA_CONTAINER_SELECTORS = [
-        "#nocaptcha",  # 验证码容器
-        ".nocaptcha",  # 验证码容器（备用）
-        "div[class*='captcha']",  # 验证码容器（通用）
+        "#baxia-dialog-content",  # 验证码容器（最常见）
+        ".nc-container",  # 验证码容器（备用）
+        "#nocaptcha",  # 刮刮乐容器
+        ".scratch-captcha-container",  # 刮刮乐容器
+        "[class*='captcha']",
     ]
     
     def __init__(self):
@@ -58,25 +63,34 @@ class SliderSolver:
                 logger.info(f"[Slider] 开始滑块验证 (第 {attempt}/{max_retries} 次)")
                 
                 # 1. 访问验证页面
-                await page.goto(verification_url, wait_until="domcontentloaded", timeout=15000)
-                await asyncio.sleep(random.uniform(0.5, 1.0))
+                await page.goto(verification_url, wait_until="networkidle", timeout=15000)
                 
-                # 2. 注入反检测脚本
+                # 2. 等待验证码加载（重要！）
+                await asyncio.sleep(2.0)
+                
+                # 3. 注入反检测脚本
                 await self._inject_stealth_script(page)
                 
-                # 3. 查找滑块 frame（可能在 iframe 中）
+                # 4. 等待 iframe 加载（验证码可能在 iframe 中）
+                try:
+                    await page.wait_for_selector("iframe", timeout=5000)
+                    await asyncio.sleep(1.0)
+                except Exception:
+                    logger.debug("[Slider] 未检测到 iframe")
+                
+                # 5. 查找滑块 frame（可能在 iframe 中）
                 slider_frame = await self._find_slider_frame(page)
                 if not slider_frame:
                     logger.warning("[Slider] 未找到滑块 frame")
                     continue
                 
-                # 4. 定位滑块元素
+                # 6. 定位滑块元素
                 slider_btn, slider_track = await self._find_slider_elements(slider_frame)
                 if not slider_btn or not slider_track:
                     logger.warning("[Slider] 未找到滑块元素")
                     continue
                 
-                # 5. 计算滑动距离
+                # 7. 计算滑动距离
                 distance = await self._calculate_distance(slider_btn, slider_track)
                 if distance <= 0:
                     logger.warning("[Slider] 滑动距离计算失败")
@@ -84,13 +98,13 @@ class SliderSolver:
                 
                 logger.info(f"[Slider] 滑动距离: {distance}px")
                 
-                # 6. 生成人类轨迹
+                # 8. 生成人类轨迹
                 trajectory = self._generate_human_trajectory(distance)
                 
-                # 7. 模拟滑动
+                # 9. 模拟滑动
                 await self._simulate_drag(slider_btn, trajectory)
                 
-                # 8. 检查验证结果
+                # 10. 检查验证结果
                 success = await self._check_result(slider_frame, page)
                 
                 if success:
@@ -103,8 +117,8 @@ class SliderSolver:
                     if attempt < max_retries:
                         await asyncio.sleep(random.uniform(0.5, 1.0))
                         # 刷新页面重试
-                        await page.reload(wait_until="domcontentloaded")
-                        await asyncio.sleep(random.uniform(0.3, 0.6))
+                        await page.reload(wait_until="networkidle")
+                        await asyncio.sleep(1.0)
                 
             except Exception as e:
                 logger.error(f"[Slider] 第 {attempt} 次验证异常: {e}")

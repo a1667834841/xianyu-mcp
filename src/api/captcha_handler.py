@@ -4,6 +4,7 @@ import logging
 from typing import Dict, Any, Optional
 
 from .slider_solver import SliderSolver
+from src.browser_bridge import BrowserBridge
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +30,6 @@ class CaptchaHandler:
         Returns:
             bool: 验证是否成功
         """
-        from .browser_bridge import BrowserBridge
-        
         bridge = BrowserBridge()
         page = None
         
@@ -72,11 +71,10 @@ class CaptchaHandler:
             
         finally:
             # 6. 关闭验证页面
-            if bridge:
-                await bridge.close_captcha_page()
+            await bridge.close_captcha_page()
                 
-                # 7. 断开连接（保留浏览器容器运行）
-                await bridge.disconnect()
+            # 7. 断开连接（保留浏览器容器运行）
+            await bridge.disconnect()
     
     def _update_cookies(self, new_cookies: Dict[str, str]):
         """更新 cookies
