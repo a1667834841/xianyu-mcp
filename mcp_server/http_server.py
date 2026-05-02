@@ -7,8 +7,10 @@ import os
 import sys
 import json
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from typing import Dict, List, Any
 
 from mcp.server.fastmcp import FastMCP
 from starlette.responses import JSONResponse
@@ -17,6 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.api.client import XianyuApiClient
 from src.settings import load_settings
+
+logger = logging.getLogger(__name__)
 
 CDP_HOST = os.environ.get("CDP_HOST", "chrome-headless")
 CDP_PORT = int(os.environ.get("CDP_PORT", "9222"))
@@ -296,6 +300,111 @@ async def xianyu_debug_snapshot(
         return json.dumps(payload, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+
+
+@mcp.tool()
+def xianyu_get_cached_conversations(limit: int = 20) -> List[Dict[str, Any]]:
+    """获取本地缓存的对话列表
+    
+    返回 WebSocket 连接后收到的所有对话，按最后消息时间降序排序。
+    
+    Args:
+        limit: 返回对话数量上限（默认 20）
+    
+    Returns:
+        对话列表，每个对话包含：
+        - conversation_id: 对话 ID
+        - user_id: 用户 ID
+        - user_nick: 用户昵称
+        - last_message: 最后消息摘要
+        - last_message_time: 最后消息时间戳
+        - unread_count: 未读消息数
+    """
+    try:
+        client = get_client()
+        conversations = client.ws_client.cache.get_conversations(limit)
+        
+        result = []
+        for conv in conversations:
+            result.append({
+                "conversation_id": conv.conversation_id,
+                "user_id": conv.user_id,
+                "user_nick": conv.user_nick,
+                "last_message": conv.last_message,
+                "last_message_time": conv.last_message_time,
+                "unread_count": conv.unread_count,
+            })
+        
+        return result
+    except Exception as e:
+        logger.error(f"获取缓存对话失败: {e}")
+        return []
+
+
+@mcp.tool()
+def xianyu_get_cached_messages(conversation_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """获取对话的消息历史（本地缓存）
+    
+    从本地缓存中获取指定对话的消息历史，按时间降序排序。
+    
+    Args:
+        conversation_id: 对话 ID（从 xianyu_get_cached_conversations 获取）
+        limit: 返回消息数量上限（默认 50）
+    
+    Returns:
+        消息列表，每个消息包含：
+        - message_id: 消息 ID
+        - sender_id: 发送者 ID
+        - receiver_id: 接收者 ID
+        - content: 消息内容（{"type": "text", "text": "..."} 或 {"type": "image", "image_url": "..."}）
+        - timestamp: 消息时间戳
+        - is_read: 是否已读
+    """
+    try:
+        client = get_client()
+        messages = client.ws_client.cache.get_messages(conversation_id, limit)
+        
+        result = []
+        for msg in messages:
+            content_dict = {}
+            if hasattr(msg.content, 'text'):
+                content_dict = {"type": "text", "text": msg.content.text}
+            elif hasattr(msg.content, 'image_url'):
+                content_dict = {"type": "image", "image_url": msg.content.image_url}
+            elif hasattr(msg.content, 'audio_url'):
+                content_dict = {"type": "audio", "audio_url": msg.content.audio_url}
+            
+            result.append({
+                "message_id": msg.message_id,
+                "sender_id": msg.sender_id,
+                "receiver_id": msg.receiver_id,
+                "content": content_dict,
+                "timestamp": msg.timestamp,
+                "is_read": msg.is_read,
+            })
+        
+        return result
+    except Exception as e:
+        logger.error(f"获取缓存消息失败: {e}")
+        return []
+
+
+@mcp.tool()
+def xianyu_clear_cache() -> Dict[str, Any]:
+    """清空对话缓存
+    
+    清空所有本地缓存的对话和消息数据。
+    
+    Returns:
+        {"success": True} 表示清空成功
+    """
+    try:
+        client = get_client()
+        client.ws_client.cache.clear()
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"清空缓存失败: {e}")
+        return {"success": False, "message": str(e)}
 
 
 async def rest_login(request):
