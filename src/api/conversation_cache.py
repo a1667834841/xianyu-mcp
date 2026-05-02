@@ -45,8 +45,29 @@ class ConversationCache:
                 del self._messages[oldest_conv_id]
 
     def add_message(self, conv_id: str, msg: ChatMessage) -> None:
-        """添加消息到对话"""
-        raise NotImplementedError
+        """添加消息到对话
+        
+        自动管理消息数量上限：
+        - 如果超出 max_messages_per_conv，删除最早的消息
+        """
+        # 确保 conversation_id 匹配
+        if msg.conversation_id != conv_id:
+            msg.conversation_id = conv_id
+        
+        # 如果对话不存在，初始化消息列表
+        if conv_id not in self._messages:
+            self._messages[conv_id] = []
+        
+        # 添加消息
+        self._messages[conv_id].append(msg)
+        
+        # 检查容量限制
+        if len(self._messages[conv_id]) > self.max_messages_per_conv:
+            # 找到最早的消息（timestamp 最小的）
+            messages = self._messages[conv_id]
+            oldest_idx = min(range(len(messages)), key=lambda i: messages[i].timestamp)
+            # 删除最早的消息
+            self._messages[conv_id].pop(oldest_idx)
 
     def get_conversations(self, limit: int = 20) -> List[Conversation]:
         """获取对话列表（按最后消息时间降序排序）"""
@@ -57,7 +78,13 @@ class ConversationCache:
 
     def get_messages(self, conv_id: str, limit: int = 50) -> List[ChatMessage]:
         """获取对话的消息列表（按时间降序排序）"""
-        return []
+        if conv_id not in self._messages:
+            return []
+        
+        messages = self._messages[conv_id]
+        # 按时间降序排序（最新的在前）
+        messages.sort(key=lambda m: m.timestamp, reverse=True)
+        return messages[:limit]
 
     def get_conversation_by_user(self, user_id: str) -> Optional[Conversation]:
         """按 user_id 查找对话"""

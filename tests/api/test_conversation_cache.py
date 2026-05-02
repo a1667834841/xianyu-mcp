@@ -128,3 +128,106 @@ def test_update_conversation_invalid():
     
     cache.update_conversation(conv_invalid)
     assert len(cache.get_conversations()) == 0
+
+
+def test_add_message_basic():
+    """测试基本消息添加"""
+    cache = ConversationCache()
+    
+    # 先添加对话
+    conv = Conversation(
+        conversation_id="conv1",
+        user_id="user1",
+        user_nick="用户1",
+        last_message="",
+        last_message_time=0.0,
+        unread_count=0
+    )
+    cache.update_conversation(conv)
+    
+    # 添加消息
+    msg1 = ChatMessage(
+        message_id="msg1",
+        conversation_id="conv1",
+        sender_id="user1",
+        receiver_id="user2",
+        content=TextContent(type="text", text="你好"),
+        timestamp=1000.0
+    )
+    
+    cache.add_message("conv1", msg1)
+    
+    messages = cache.get_messages("conv1")
+    assert len(messages) == 1
+    assert messages[0].message_id == "msg1"
+
+
+def test_add_message_capacity_limit():
+    """测试消息容量限制（超出时删除最早的消息）"""
+    cache = ConversationCache(max_messages_per_conv=3)
+    
+    # 添加对话
+    conv = Conversation(
+        conversation_id="conv1",
+        user_id="user1",
+        user_nick="用户1",
+        last_message="",
+        last_message_time=0.0,
+        unread_count=0
+    )
+    cache.update_conversation(conv)
+    
+    # 添加 3 条消息
+    for i in range(3):
+        msg = ChatMessage(
+            message_id=f"msg{i}",
+            conversation_id="conv1",
+            sender_id="user1",
+            receiver_id="user2",
+            content=TextContent(type="text", text=f"消息{i}"),
+            timestamp=1000.0 + i
+        )
+        cache.add_message("conv1", msg)
+    
+    # 验证有 3 条消息
+    messages = cache.get_messages("conv1")
+    assert len(messages) == 3
+    
+    # 添加第 4 条消息（应该删除最早的 msg0）
+    msg4 = ChatMessage(
+        message_id="msg4",
+        conversation_id="conv1",
+        sender_id="user1",
+        receiver_id="user2",
+        content=TextContent(type="text", text="消息4"),
+        timestamp=1004.0
+    )
+    cache.add_message("conv1", msg4)
+    
+    messages = cache.get_messages("conv1")
+    assert len(messages) == 3
+    # 验证 msg0 已被删除
+    msg_ids = [m.message_id for m in messages]
+    assert "msg0" not in msg_ids
+    assert "msg4" in msg_ids
+
+
+def test_add_message_without_conversation():
+    """测试在不存在对话时添加消息（消息仍然被存储）"""
+    cache = ConversationCache()
+    
+    # 直接添加消息（无对应对话）
+    msg = ChatMessage(
+        message_id="msg1",
+        conversation_id="conv_new",
+        sender_id="user_new",
+        receiver_id="user_me",
+        content=TextContent(type="text", text="测试"),
+        timestamp=1000.0
+    )
+    
+    cache.add_message("conv_new", msg)
+    
+    # 验证消息已添加
+    messages = cache.get_messages("conv_new")
+    assert len(messages) == 1
