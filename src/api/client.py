@@ -194,7 +194,7 @@ class XianyuApiClient:
     async def start_ws_listener(self) -> Dict[str, Any]:
         """启动 WebSocket 监听"""
         try:
-            success = await self.ws_client.start()
+            success = await self.ws_client.connect()
             return {"success": success, "message": "监听已启动" if success else "启动失败"}
         except Exception as e:
             return {"success": False, "message": str(e)}
@@ -216,7 +216,7 @@ class XianyuApiClient:
             return {"success": False, "message": str(e)}
 
     def ws_is_connected(self) -> bool:
-        return self.ws_client.is_connected()
+        return self.ws_client.is_connected
 
     def ws_on_message(self, handler):
         self.ws_client.on_message(handler)
