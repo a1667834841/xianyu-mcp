@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, patch
 from src.api.client import XianyuApiClient
@@ -55,3 +56,22 @@ class TestXianyuApiClient:
                 
                 assert result["success"] == True
                 assert result["method"] == "browser"
+
+
+@pytest.mark.asyncio
+async def test_ensure_ws_started_creates_background_task(monkeypatch):
+    client = XianyuApiClient()
+    client.ws_status = "disconnected"
+    client.ws_last_error = None
+    client.ws_started_at = None
+    client._ws_start_task = None
+    client.ws_client.connect = AsyncMock(return_value=True)
+
+    result = await client.ensure_ws_started(reason="service_start")
+
+    assert result["success"] is True
+    assert result["status"] == "starting"
+    assert result["reason"] == "service_start"
+    assert client._ws_start_task is not None
+
+    await client._ws_start_task

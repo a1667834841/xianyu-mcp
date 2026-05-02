@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Dict, Any, Optional, List
 
@@ -30,6 +31,11 @@ class XianyuApiClient:
         self.websocket_pool = WebSocketPool()
         self.browser_bridge = BrowserBridge()
         
+        self.ws_status = "disconnected"
+        self.ws_last_error = None
+        self.ws_started_at = None
+        self._ws_start_task = None
+        
         self._initialized = True
     
     def initialize(self, cookies: Dict[str, str], device_id: str):
@@ -37,6 +43,11 @@ class XianyuApiClient:
         self.http_client = HttpClient(cookies=cookies, device_id=device_id)
         
         self.browser_bridge = BrowserBridge()
+        
+        self.ws_status = "disconnected"
+        self.ws_last_error = None
+        self.ws_started_at = None
+        self._ws_start_task = None
     
     async def login(self, timeout: int = 300) -> Dict[str, Any]:
         """登录 - 纯 HTTP 获取二维码（不依赖浏览器）"""
@@ -223,6 +234,55 @@ class XianyuApiClient:
         if "item?id=" in item_url:
             return item_url.split("item?id=")[-1].split("&")[0]
         return ""
+    
+    def get_ws_status(self) -> Dict[str, Any]:
+        """返回 WebSocket 当前状态快照。"""
+        connected = bool(self.ws_client and self.ws_client.is_connected)
+        status = "connected" if connected else self.ws_status
+        return {
+            "connected": connected,
+            "status": status,
+            "last_error": self.ws_last_error,
+            "started_at": self.ws_started_at,
+        }
+
+    async def ensure_ws_started(self, reason: str) -> Dict[str, Any]:
+        """幂等地确保 WebSocket 后台启动。"""
+        if self.ws_client and self.ws_client.is_connected:
+            self.ws_status = "connected"
+            return {"success": True, "status": "connected", "reason": reason}
+
+        if self._ws_start_task and not self._ws_start_task.done():
+            self.ws_status = "starting"
+            return {"success": True, "status": "starting", "reason": reason}
+
+        self.ws_status = "starting"
+        self.ws_last_error = None
+        import time
+        self.ws_started_at = time.strftime("%Y-%m-%dT%H:%M:%S")
+        self._ws_start_task = asyncio.create_task(self._run_ws_start(reason))
+        return {"success": True, "status": "starting", "reason": reason}
+
+    async def _run_ws_start(self, reason: str) -> None:
+        try:
+            success = await self.ws_client.connect()
+            if not success:
+                self.ws_status = "failed"
+                self.ws_last_error = "WebSocket connect returned false"
+                return
+
+            for _ in range(30):
+                if self.ws_client.is_connected:
+                    self.ws_status = "connected"
+                    self.ws_last_error = None
+                    return
+                await asyncio.sleep(1)
+
+            self.ws_status = "failed"
+            self.ws_last_error = "WebSocket initialization timed out"
+        except Exception as exc:
+            self.ws_status = "failed"
+            self.ws_last_error = str(exc)
     
     async def start_ws_listener(self) -> Dict[str, Any]:
         """启动 WebSocket 监听"""
