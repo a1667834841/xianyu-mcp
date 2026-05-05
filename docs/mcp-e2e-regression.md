@@ -8,7 +8,7 @@
 |------|----------|
 | 登录 | 纯 HTTP API |
 | 搜索 | HTTP MTOP API |
-| 发布 | HTTP API + 浏览器降级 |
+| 发布 | HTTP API |
 
 服务默认端口: `8080`
 
@@ -313,6 +313,33 @@ python3 scripts/mcp-dev call xianyu_ws_status
   "started_at": "2026-05-05T16:46:54"
 }
 ```
+
+### 默认 `8080` 实例的 HTTP keepalive 保活行为
+
+当前 MCP 主服务链路已接入独立的 HTTP keepalive 任务，不再依赖旧的浏览器页面 `goto/reload` 保活方案。
+
+保活规则：
+
+- 默认每 `4` 小时执行一次 HTTP 续活（`240` 分钟）
+- 可通过配置覆盖间隔
+- HTTP 续活若触发风控，则自动走浏览器滑块恢复
+- 单次保活周期内，滑块恢复最多重试 `3` 次
+- `3` 次全部失败后，停止该 keepalive 任务
+
+聚焦验证命令：
+
+```bash
+pytest tests/test_http_keepalive.py tests/test_api_client.py tests/test_http_server_unit.py tests/test_settings.py -q
+python3 scripts/mcp-dev call xianyu_check_session
+python3 scripts/mcp-dev call xianyu_ws_status
+```
+
+验证结果：
+
+- `82 passed`
+- MCP 服务仍能正常启动
+- session 校验正常
+- WebSocket 连接正常
 
 ### 真实消息发送
 

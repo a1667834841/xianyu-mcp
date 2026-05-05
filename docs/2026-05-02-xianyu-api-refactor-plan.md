@@ -4,7 +4,7 @@
 
 **Goal:** 将闲鱼 MCP 服务从浏览器自动化重构为 API 优先架构，新增会话管理功能。
 
-**Architecture:** 采用分层架构：HttpClient 处理 MTOP API 调用，WebSocketPool 管理实时消息，BrowserBridge 提供发布和刷新的降级方案。全局单例 XianyuApiClient 统一管理。
+**Architecture:** 采用分层架构：HttpClient 处理 MTOP API 调用，WebSocketPool 管理实时消息，CaptchaHandler + BrowserBridge 仅负责风控恢复，不再提供业务 fallback。
 
 **Tech Stack:** Python 3.10+, requests, websockets, pytest, asyncio, mcp
 
@@ -1956,7 +1956,7 @@ git rm tests/test_multi_user_*.py
 - **单用户模式**：全局维护一个用户会话
 - **API 优先**：搜索、详情、会话管理使用 HTTP MTOP API
 - **WebSocket 消息**：实时消息收发
-- **浏览器降级**：发布和刷新 Cookie 支持浏览器自动化 fallback
+- **浏览器用途收敛**：浏览器仅用于验证码、滑块与风控处理
 
 ## MCP 工具
 

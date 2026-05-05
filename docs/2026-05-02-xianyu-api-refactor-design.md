@@ -11,7 +11,7 @@
 **核心变更：**
 1.  **单用户模式**：移除多用户管理（MultiUserManager），改为全局单例模式。
 2.  **API 优先**：所有功能（搜索、详情、登录、会话）默认使用 HTTP API 或 WebSocket 实现。
-3.  **浏览器降级**：仅 `publish`（发布）和 `refresh_token`（刷新 Cookie）在 API 失败时，降级使用 Playwright 浏览器自动化。
+3.  **浏览器用途收敛**：浏览器能力仅用于验证码、滑块与风控处理，不再承担发布、刷新 Token 或补 access token 的业务降级。
 4.  **新增会话功能**：增加创建对话、获取对话列表、获取消息历史和发送消息的能力。
 5.  **移除调试工具**：移除 `xianyu_browser_overview` 和 `xianyu_debug_snapshot`。
 
@@ -27,7 +27,7 @@ src/
 │   ├── websocket_pool.py        # WebSocketPool：连接管理、消息收发
 │   ├── conversation_manager.py  # ConversationManager：会话逻辑封装
 │   └── types.py                 # 数据类型定义（Message, Conversation 等）
-├── browser_bridge.py            # 浏览器桥接：仅用于发布和刷新 Cookie 的 fallback
+├── browser_bridge.py            # 浏览器桥接：仅用于验证码、滑块与风控处理
 ├── session.py                   # 会话管理：Cookie 存储、Token 刷新逻辑
 ├── settings.py                  # 配置管理
 └── mcp_server/
@@ -46,11 +46,9 @@ src/
 │   │   HttpClient   │   │   WebSocketPool        │ │
 │   │ (MTOP API 优先) │   │ (连接池 + 实时消息)     │ │
 │   └───────┬────────┘   └────────────────────────┘ │
-│           │ (API 失败)                             │
-│           ▼                                       │
 │   ┌───────────────────────────────────────────┐   │
-│   │        BrowserBridge (浏览器兜底)           │   │
-│   │   (仅用于: 发布商品、刷新 Cookie)           │   │
+│   │ BrowserBridge / CaptchaHandler            │   │
+│   │ (仅用于验证码、滑块与风控恢复)            │   │
 │   └───────────────────────────────────────────┘   │
 ├───────────────────────────────────────────────────┤
 │           SessionManager (登录态管理)               │
