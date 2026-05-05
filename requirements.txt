@@ -6,6 +6,9 @@ playwright>=1.40.0
 # HTTP 请求
 requests>=2.31.0
 
+# WebSocket 客户端
+websockets>=12.0
+
 # MCP Server
 mcp>=1.0.0
 
