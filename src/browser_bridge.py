@@ -1,15 +1,13 @@
 import logging
 import json
 import urllib.request
-import hashlib
-import time
-from typing import Dict, Any, Optional
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class BrowserBridge:
-    """浏览器桥接 - 用于 API 失败时的降级方案和滑块验证"""
+    """浏览器桥接，仅用于验证码、滑块与风控处理。"""
     
     CDP_PORT = 9222
     CDP_HOST = "localhost"
@@ -148,66 +146,6 @@ class BrowserBridge:
         await self._context.add_cookies(payload)
         logger.info(f"[BrowserBridge] 已向浏览器上下文注入 {len(payload)} 个 cookies")
 
-    async def get_access_token_via_browser(self, device_id: str, cookies: Dict[str, str] | None = None) -> str:
-        """在浏览器上下文中请求 accessToken。"""
-        page = await self.connect_to_browser_pool()
-        if not page:
-            return ""
-
-        try:
-            if cookies:
-                await self.apply_cookies_to_context(cookies)
-
-            await page.goto("https://www.goofish.com", wait_until="domcontentloaded", timeout=30000)
-
-            token_cookie = await self.get_captcha_cookies()
-            full_token = token_cookie.get("_m_h5_tk", "") if token_cookie else ""
-            if not full_token and self._context:
-                all_cookies = await self._context.cookies()
-                for cookie in all_cookies:
-                    if cookie.get("name") == "_m_h5_tk":
-                        full_token = cookie.get("value", "")
-                        break
-
-            token = full_token.split("_")[0] if full_token else ""
-            if not token:
-                return ""
-
-            api = "mtop.taobao.idlemessage.pc.login.token"
-            app_key = "34839810"
-            ws_app_key = "444e9908a51d1cb236a27862abc769c9"
-            timestamp = str(int(time.time() * 1000))
-            data_obj = {"appKey": ws_app_key, "deviceId": device_id}
-            data = json.dumps(data_obj, separators=(",", ":"))
-            sign = hashlib.md5(f"{token}&{timestamp}&{app_key}&{data}".encode()).hexdigest()
-            url = (
-                f"https://h5api.m.goofish.com/h5/{api.lower()}/1.0/"
-                f"?jsv=2.7.2&appKey={app_key}&t={timestamp}&sign={sign}&v=1.0"
-                f"&type=originaljson&accountSite=xianyu&dataType=json&timeout=20000"
-                f"&api={api}&sessionOption=AutoLoginOnly"
-            )
-            result = await page.evaluate(
-                """async ({ url, data }) => {
-                    try {
-                        const body = new URLSearchParams({ data });
-                        const resp = await fetch(url, {
-                            method: 'POST',
-                            credentials: 'include',
-                            headers: { 'content-type': 'application/x-www-form-urlencoded' },
-                            body,
-                        });
-                        return await resp.json();
-                    } catch (error) {
-                        return { error: String(error) };
-                    }
-                }""",
-                {"url": url, "data": data},
-            )
-            return result.get("data", {}).get("accessToken", "") if isinstance(result, dict) else ""
-        finally:
-            await self.close_captcha_page()
-            await self.disconnect()
-    
     async def close_captcha_page(self):
         """关闭验证页面（不关闭浏览器容器）"""
         if self._page:
@@ -232,56 +170,6 @@ class BrowserBridge:
                 logger.info("[BrowserBridge] 已断开连接")
         except Exception as e:
             logger.warning(f"[BrowserBridge] 断开连接失败: {e}")
-    
-    async def publish_via_browser(
-        self, 
-        item_url: str, 
-        **kwargs
-    ) -> Dict[str, Any]:
-        """通过浏览器发布商品"""
-        try:
-            browser = await self._ensure_browser()
-            
-            # TODO: 实现浏览器发布逻辑
-            # 复用现有的 src/core.py 中的发布逻辑
-            
-            logger.info(f"通过浏览器发布商品: {item_url}")
-            
-            return {
-                "success": True,
-                "item_id": None,
-                "method": "browser",
-                "publish_state": "published",
-            }
-        except Exception as e:
-            logger.error(f"浏览器发布失败: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "method": "browser",
-            }
-    
-    async def refresh_via_browser(self) -> Dict[str, Any]:
-        """通过浏览器刷新 Cookie"""
-        try:
-            browser = await self._ensure_browser()
-            
-            # TODO: 实现浏览器刷新逻辑
-            # 访问首页获取最新 Cookie
-            
-            logger.info("通过浏览器刷新 Cookie")
-            
-            return {
-                "success": True,
-                "method": "browser",
-            }
-        except Exception as e:
-            logger.error(f"浏览器刷新失败: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "method": "browser",
-            }
     
     async def close(self):
         """关闭浏览器"""

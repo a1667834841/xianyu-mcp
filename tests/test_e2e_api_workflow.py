@@ -104,18 +104,12 @@ class TestEndToEndWorkflow:
             assert send_result == True
 
     @pytest.mark.asyncio
-    async def test_refresh_token_fallback_workflow(self):
-        """测试刷新 Token 降级工作流"""
+    async def test_refresh_token_returns_http_failure_when_api_fails(self):
         client = XianyuApiClient()
-        
-        # API 失败，降级浏览器
+
         with patch.object(client.http_client, "refresh_token", new_callable=AsyncMock) as mock_api:
             mock_api.side_effect = Exception("API failed")
-            
-            with patch.object(client.browser_bridge, "refresh_via_browser", new_callable=AsyncMock) as mock_browser:
-                mock_browser.return_value = {"success": True, "method": "browser"}
-                
-                result = await client.refresh_token()
-                
-                assert result["success"] == True
-                assert result["method"] == "browser"
+
+            result = await client.refresh_token()
+
+        assert result == {"success": False, "method": "http", "message": "API failed"}

@@ -6,37 +6,6 @@ from src.api.captcha_handler import CaptchaHandler
 
 class TestBrowserBridge:
     @pytest.mark.asyncio
-    async def test_publish_via_browser(self):
-        """测试通过浏览器发布商品"""
-        bridge = BrowserBridge()
-        
-        with patch.object(bridge, "_ensure_browser") as mock_ensure:
-            mock_ensure.return_value = True
-            
-            result = await bridge.publish_via_browser(
-                item_url="http://example.com/item/123",
-                title="测试商品",
-                price=100.0
-            )
-            
-            assert "success" in result
-            assert "method" in result
-            assert result["method"] == "browser"
-
-    @pytest.mark.asyncio
-    async def test_refresh_via_browser(self):
-        """测试通过浏览器刷新 Cookie"""
-        bridge = BrowserBridge()
-        
-        with patch.object(bridge, "_ensure_browser") as mock_ensure:
-            mock_ensure.return_value = True
-            
-            result = await bridge.refresh_via_browser()
-            
-            assert "success" in result
-            assert result["success"] == True
-
-    @pytest.mark.asyncio
     async def test_get_captcha_cookies_falls_back_to_all_cookies_when_no_x5_present(self):
         bridge = BrowserBridge()
 
@@ -84,41 +53,6 @@ class TestBrowserBridge:
             {"name": "_m_h5_tk", "value": "token_value_123", "domain": ".goofish.com", "path": "/"},
             {"name": "unb", "value": "4188939592", "domain": ".goofish.com", "path": "/"},
         ]
-
-    @pytest.mark.asyncio
-    async def test_get_access_token_via_browser_returns_token_from_page(self):
-        bridge = BrowserBridge()
-
-        async def fake_connect():
-            return bridge._page
-
-        class FakePage:
-            async def goto(self, url, wait_until=None, timeout=None):
-                return None
-
-            async def evaluate(self, script, payload):
-                return {"data": {"accessToken": "oauth_k1:browser_token_value"}}
-
-        bridge._page = FakePage()
-        bridge.connect_to_browser_pool = fake_connect
-
-        async def fake_close_page():
-            return None
-
-        async def fake_disconnect():
-            return None
-
-        bridge.close_captcha_page = fake_close_page
-        bridge.disconnect = fake_disconnect
-
-        async def fake_get_captcha_cookies():
-            return {"_m_h5_tk": "token_value_123"}
-
-        bridge.get_captcha_cookies = fake_get_captcha_cookies
-
-        token = await bridge.get_access_token_via_browser("web_4188939592")
-
-        assert token == "oauth_k1:browser_token_value"
 
 
 class TestCaptchaHandler:
