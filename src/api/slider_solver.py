@@ -46,6 +46,7 @@ class SliderSolver:
             "jitter_x_range": [0, 2],  # X 抖动（像素）
             "jitter_y_range": [0, 2],  # Y 抖动（像素）
         }
+        self._detected_slider_frame: Optional[Frame] = None
     
     async def solve(self, page: Page, verification_url: str, max_retries: int = 3) -> bool:
         """执行滑块验证
@@ -102,7 +103,7 @@ class SliderSolver:
                 trajectory = self._generate_human_trajectory(distance)
                 
                 # 9. 模拟滑动
-                await self._simulate_drag(slider_btn, trajectory)
+                await self._simulate_drag(page, slider_btn, trajectory)
                 
                 # 10. 检查验证结果
                 success = await self._check_result(slider_frame, page)
@@ -169,12 +170,24 @@ class SliderSolver:
     
     async def _find_slider_frame(self, page: Page) -> Optional[Frame]:
         """查找包含滑块的 frame（可能在 iframe 中）"""
+
+        cached_frame = self._detected_slider_frame
+        if cached_frame is not None:
+            try:
+                for selector in self.CAPTCHA_CONTAINER_SELECTORS:
+                    element = await cached_frame.query_selector(selector)
+                    if element:
+                        logger.info("[Slider] 复用已缓存的验证码 frame")
+                        return cached_frame
+            except Exception:
+                self._detected_slider_frame = None
         
         # 先检查主页面
         for selector in self.CAPTCHA_CONTAINER_SELECTORS:
             try:
                 element = await page.query_selector(selector)
                 if element:
+                    self._detected_slider_frame = page
                     logger.info(f"[Slider] 在主页面找到验证码容器: {selector}")
                     return page
             except Exception:
@@ -189,12 +202,14 @@ class SliderSolver:
                 try:
                     element = await frame.query_selector(selector)
                     if element:
+                        self._detected_slider_frame = frame
                         logger.info(f"[Slider] 在 iframe 找到验证码容器: {selector}")
                         return frame
                 except Exception:
                     continue
         
         # 如果没找到容器，直接返回主页面（可能在其他位置）
+        self._detected_slider_frame = page
         logger.info("[Slider] 未找到验证码容器，使用主页面")
         return page
     
@@ -291,7 +306,7 @@ class SliderSolver:
         
         return trajectory
     
-    async def _simulate_drag(self, element: ElementHandle, trajectory: List[Tuple[float, float, float]]):
+    async def _simulate_drag(self, page: Page, element: ElementHandle, trajectory: List[Tuple[float, float, float]]):
         """模拟拖动滑块
         
         Args:
@@ -307,24 +322,19 @@ class SliderSolver:
             start_x = box['x'] + box['width'] / 2
             start_y = box['y'] + box['height'] / 2
             
-            # 移动到起点
-            await element.hover()
+            # 先移动到滑块中心，再按下并沿轨迹拖动。
+            await page.mouse.move(start_x, start_y)
             await asyncio.sleep(random.uniform(0.1, 0.2))
-            
-            # 鼠标按下
-            await element.hover()  # 使用 hover 模拟
+            await page.mouse.down()
             
             # 模拟滑动
             for x_offset, y_offset, delay in trajectory:
                 target_x = start_x + x_offset
                 target_y = start_y + y_offset
-                
-                # 使用 CDP Input.dispatchMouseEvent（更真实）
-                # 但 Playwright 的 hover 已经足够
-                
+                await page.mouse.move(target_x, target_y)
                 await asyncio.sleep(delay)
             
-            # 鼠标释放（等待验证结果）
+            await page.mouse.up()
             await asyncio.sleep(random.uniform(0.5, 1.0))
             
             logger.debug("[Slider] 滑动完成")
@@ -347,14 +357,13 @@ class SliderSolver:
             # 等待验证结果
             await asyncio.sleep(1.0)
             
-            # 检查滑块是否消失（验证成功）
+            # 仅凭容器消失不足以判定成功，风控页可能会短暂重绘或切换 DOM。
             for selector in self.CAPTCHA_CONTAINER_SELECTORS:
                 try:
                     element = await slider_frame.query_selector(selector)
                     if not element:
-                        logger.info("[Slider] 验证码容器已消失")
-                        return True
-                    
+                        continue
+
                     # 检查是否有成功标识
                     class_name = await element.get_attribute("class") or ""
                     if "success" in class_name.lower() or "passed" in class_name.lower():

@@ -10,7 +10,9 @@
 | 搜索 | HTTP MTOP API |
 | 发布 | HTTP API + 浏览器降级 |
 
-服务端口: `8080`
+服务默认端口: `8080`
+
+如果实例临时运行在其他端口，例如 `18090`，所有示例命令都应通过 `MCP_DEV_URL` 或实际 REST 地址显式覆盖；不要把临时端口当成默认配置。
 
 ---
 
@@ -99,8 +101,248 @@ curl -X POST http://localhost:8080/rest/login_poll \
 
 ---
 
+## MCP 工具端到端测试案例
+
+以下案例均使用 `./scripts/mcp-dev` 脚本进行验证。执行前请确保已启动 `mcp_server.http_server`。
+
+### 1. xianyu_login (登录)
+```bash
+./scripts/mcp-dev call xianyu_login
+```
+**验证点**:
+- 返回 `success: true`
+- 若已登录：`logged_in: true`
+- 若未登录：`logged_in: false` 且包含 `qr_code.public_url`
+
+### 2. xianyu_check_session (检查会话)
+```bash
+./scripts/mcp-dev call xianyu_check_session
+```
+**验证点**:
+- 返回 `valid: true` 表示登录态有效
+- 返回 `valid: false` 表示登录态过期（业务正常结果）
+
+### 3. xianyu_refresh_token (刷新 Token)
+```bash
+./scripts/mcp-dev call xianyu_refresh_token
+```
+**验证点**:
+- 返回 `success: true`
+- 包含 `message` 和 `method` (通常为 "http")
+
+### 4. xianyu_search (搜索商品)
+```bash
+./scripts/mcp-dev call xianyu_search --keyword 手机壳 --rows 3
+```
+**验证点**:
+- 返回商品列表数组（JSON 数组格式）
+- 包含 `item_id`, `title`, `price`, `detail_url` 等字段
+
+### 5. xianyu_suggest_keywords (搜索联想词)
+```bash
+./scripts/mcp-dev call xianyu_suggest_keywords --input-words 手机
+```
+**验证点**:
+- 返回关键词数组
+- 数组元素为字符串
+
+### 6. xianyu_publish (发布商品)
+```bash
+# 使用本地图片发布
+./scripts/mcp-dev call xianyu_publish --images-paths "/tmp/test.png" --title "测试商品" --current-price 10.0
+# 或使用网络图片发布 (需网络连通)
+# ./scripts/mcp-dev call xianyu_publish --images-paths "https://example.com/test.png" --title "测试商品" --current-price 10.0
+```
+**验证点**:
+- 返回 `success: true`
+- 包含 `item_id` 和 `item_url`
+- **注意**: 此命令会真实发布商品到闲鱼，请谨慎使用。
+
+### 7. xianyu_get_detail (获取商品详情)
+```bash
+./scripts/mcp-dev call xianyu_get_detail --item-url "https://www.goofish.com/item?id=1047155930582"
+```
+**验证点**:
+- 返回完整的商品详情 JSON
+- 包含 `itemDO`, `sellerDO` 等字段
+
+### 8. xianyu_ws_send (发送消息)
+```bash
+./scripts/mcp-dev call xianyu_ws_send --target-id 60971615689 --conversation-id 60971615689 --content 你好
+```
+**验证点**:
+- 返回 `success: true`
+- 返回 `message: 消息已发送`
+- `target_id` 和 `conversation_id` 保持字符串类型（脚本已修复纯数字转 int 问题）
+
+### 9. xianyu_ws_status (WebSocket 状态)
+```bash
+./scripts/mcp-dev call xianyu_ws_status
+```
+**验证点**:
+- 返回 `connected: true/false`
+- 返回 `status: connected/starting/disconnected/failed`
+- 返回 `started_at` 时间戳
+
+### 10. xianyu_get_access_token (获取 Access Token)
+```bash
+./scripts/mcp-dev call xianyu_get_access_token
+```
+**验证点**:
+- 返回 `success: true`
+- 返回脱敏的 `access_token` (如 `oauth_k1:abc...`)
+
+### 11. xianyu_list_conversations (获取对话列表)
+```bash
+./scripts/mcp-dev call xianyu_list_conversations --limit 10
+```
+**验证点**:
+- 返回 `success: true`
+- 返回 `source: websocket` 或 `source: cache`
+- 返回 `conversations` 数组，包含 `conversation_id`, `user_nick`, `last_message` 等
+
+### 12. xianyu_get_messages (获取消息历史)
+```bash
+./scripts/mcp-dev call xianyu_get_messages --conversation-id 60971615689 --limit 5
+```
+**验证点**:
+- 返回 `success: true`
+- 返回 `source: websocket` 或 `source: cache`
+- 返回 `messages` 数组，包含 `message_id`, `sender_name`, `content`, `timestamp` 等
+
+---
+
 ## 注意事项
 
 1. **业务错误不算测试失败**: 如 `valid=false`（登录态过期）是正常业务结果
 2. **冷启动慢**: 首次请求可能需要 3-10 秒，属于正常
 3. **ASGI 错误**: 服务关闭时的 ASGI 错误不影响功能
+
+---
+
+## 2026-05-05 真实联调记录
+
+本次真实联调通过 MCP 服务链路完成，覆盖了两类运行方式：
+
+- 临时实例监听在 `18090`，命令显式带 `MCP_DEV_URL`
+- 默认实例监听在 `8080`，直接使用 `scripts/mcp-dev`
+
+这不改变默认端口仍为 `8080` 的事实。
+
+### 12 个 MCP 方法回归结果（默认 `8080` 实例）
+
+| 方法 | 结果 | 摘要 |
+|------|------|------|
+| `xianyu_login` | 成功 | `logged_in: true` |
+| `xianyu_check_session` | 成功 | `valid: true` |
+| `xianyu_refresh_token` | 成功 | `success: true`, `method: http` |
+| `xianyu_search` | 成功 | 返回 3 条真实商品 |
+| `xianyu_suggest_keywords` | 成功 | 返回联想词数组 |
+| `xianyu_publish` | 成功 | 真实发布成功，见下文 |
+| `xianyu_get_detail` | 成功 | 返回真实商品详情 |
+| `xianyu_ws_send` | 成功 | 真实发送成功，见下文 |
+| `xianyu_ws_status` | 成功 | `connected: true` |
+| `xianyu_get_access_token` | 成功 | 返回脱敏的 `access_token` |
+| `xianyu_list_conversations` | 成功 | `source: websocket` |
+| `xianyu_get_messages` | 成功 | `source: websocket`，返回真实消息历史 |
+
+### 默认 `8080` 实例的真实消息发送
+
+```bash
+python3 scripts/mcp-dev call xianyu_ws_send --target-id 60971615689 --conversation-id 60971615689 --content "8080端口MCP真实回归测试，请忽略"
+```
+
+返回：
+
+```json
+{
+  "success": true,
+  "message": "消息已发送"
+}
+```
+
+### 默认 `8080` 实例的真实商品发布
+
+```bash
+python3 scripts/mcp-dev call xianyu_publish --images-paths "/opt/dockercompose/xianyu/.worktrees/feature-refactor-api/docs/xianyu-logo_001.jpg" --title "8080端口MCP发布回归测试请忽略" --current-price 1
+```
+
+返回：
+
+```json
+{
+  "success": true,
+  "item_id": "1050061932866",
+  "item_url": "https://www.goofish.com/item?id=1050061932866",
+  "message": "发布成功",
+  "method": "http"
+}
+```
+
+### 默认 `8080` 实例的 accessToken 与 WebSocket 修复验证
+
+本次修复针对滑块验证误判和拖动不稳定问题，关键改动包括：
+
+- `SliderSolver` 不再把“验证码容器消失”直接当成功
+- `CaptchaHandler` 在滑块成功后会刷新页面并复验是否仍存在滑块
+- `SliderSolver` 复用已检测到的验证码 frame，减少 iframe/上下文抖动
+- 拖动逻辑从 `hover + sleep` 改为显式 `mouse.move/down/up` 轨迹
+
+验证命令：
+
+```bash
+python3 scripts/mcp-dev call xianyu_get_access_token
+python3 scripts/mcp-dev call xianyu_ws_status
+```
+
+返回：
+
+```json
+{
+  "success": true,
+  "access_token": "oauth_k1:SCzHbbXly8L...",
+  "access_token_masked": "oauth_k1:SCzHbbXly8L..."
+}
+```
+
+```json
+{
+  "connected": true,
+  "status": "connected",
+  "last_error": null,
+  "started_at": "2026-05-05T16:46:54"
+}
+```
+
+### 真实消息发送
+
+```bash
+MCP_DEV_URL="http://127.0.0.1:18090/mcp" python3 scripts/mcp-dev call xianyu_ws_send --target-id 60971615689 --conversation-id 60971615689 --content "MCP真实联调测试，请忽略"
+```
+
+返回：
+
+```json
+{
+  "success": true,
+  "message": "消息已发送"
+}
+```
+
+### 真实商品发布
+
+```bash
+MCP_DEV_URL="http://127.0.0.1:18090/mcp" python3 scripts/mcp-dev call xianyu_publish --images-paths "/opt/dockercompose/xianyu/.worktrees/feature-refactor-api/docs/xianyu-logo_001.jpg" --title "MCP发布联调测试商品请忽略" --current-price 1
+```
+
+返回：
+
+```json
+{
+  "success": true,
+  "item_id": "1047453179489",
+  "item_url": "https://www.goofish.com/item?id=1047453179489",
+  "message": "发布成功",
+  "method": "http"
+}
+```

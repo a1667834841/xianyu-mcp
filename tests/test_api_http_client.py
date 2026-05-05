@@ -1,10 +1,66 @@
 import pytest
 import hashlib
+import json
 from unittest.mock import AsyncMock, patch
-from src.api.http_client import HttpClient
+from src.api.http_client import HttpClient, save_local_auth
 
 
 class TestHttpClientSign:
+    def test_init_loads_device_id_from_auth_file(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "tokens"
+        data_dir.mkdir()
+        (data_dir / "auth.json").write_text(
+            json.dumps({"cookies": {"unb": "123"}, "device_id": "web_saved"}),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("XIANYU_DATA_DIR", str(data_dir))
+
+        client = HttpClient(cookies=None, device_id="")
+
+        assert client.cookies == {"unb": "123"}
+        assert client.device_id == "web_saved"
+
+    def test_init_uses_unb_based_device_id_when_auth_file_has_no_device_id(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "tokens"
+        data_dir.mkdir()
+        (data_dir / "auth.json").write_text(
+            json.dumps({"cookies": {"unb": "4188939592"}}),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("XIANYU_DATA_DIR", str(data_dir))
+
+        client = HttpClient(cookies=None, device_id="")
+
+        assert client.cookies == {"unb": "4188939592"}
+        assert client.device_id == "web_4188939592"
+
+    def test_save_local_auth_preserves_existing_device_id(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "tokens"
+        data_dir.mkdir()
+        (data_dir / "auth.json").write_text(
+            json.dumps({"cookies": {"old": "cookie"}, "device_id": "web_saved"}),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("XIANYU_DATA_DIR", str(data_dir))
+
+        save_local_auth({"new": "cookie"})
+
+        saved = json.loads((data_dir / "auth.json").read_text(encoding="utf-8"))
+        assert saved["cookies"] == {"new": "cookie"}
+        assert saved["device_id"] == "web_saved"
+
+    def test_save_cookies_to_file_persists_current_cookies(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "tokens"
+        data_dir.mkdir()
+        monkeypatch.setenv("XIANYU_DATA_DIR", str(data_dir))
+
+        client = HttpClient(cookies={"cookie2": "abc", "unb": "123"}, device_id="")
+
+        client._save_cookies_to_file()
+
+        saved = json.loads((data_dir / "auth.json").read_text(encoding="utf-8"))
+        assert saved["cookies"] == {"cookie2": "abc", "unb": "123"}
+
     def test_generate_sign_basic(self):
         client = HttpClient(cookies={}, device_id="test_device")
         token = "test_token"
@@ -162,3 +218,21 @@ class TestHttpClientConversation:
             
             assert len(result["messages"]) == 1
             assert result["has_more"] == False
+
+
+class TestHttpClientAccessToken:
+    @pytest.mark.asyncio
+    async def test_get_access_token_falls_back_to_browser_bridge(self):
+        client = HttpClient(cookies={"unb": "4188939592", "_m_h5_tk": "token_123"}, device_id="web_4188939592")
+
+        with patch.object(client, "_send_request", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = {"ret": ["FAIL_SYS_USER_VALIDATE"], "data": {}}
+
+            fake_bridge = AsyncMock()
+            fake_bridge.get_access_token_via_browser.return_value = "oauth_k1:browser_token_value"
+
+            with patch("src.api.http_client.BrowserBridge", return_value=fake_bridge):
+                token = await client.get_access_token()
+
+        assert token == "oauth_k1:browser_token_value"
+        fake_bridge.get_access_token_via_browser.assert_awaited_once_with("web_4188939592", client.cookies)

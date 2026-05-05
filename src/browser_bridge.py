@@ -1,6 +1,8 @@
 import logging
 import json
 import urllib.request
+import hashlib
+import time
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -93,10 +95,10 @@ class BrowserBridge:
             return None
     
     async def get_captcha_cookies(self) -> Dict[str, str]:
-        """获取验证后的 cookies（筛选 x5 相关）
-        
+        """获取验证后的 cookies。
+
         Returns:
-            Dict[str, str]: x5 相关的 cookies
+            Dict[str, str]: 优先返回 x5/安全相关 cookies；若不存在，则回退返回全部 cookies
         """
         if not self._context:
             return {}
@@ -104,23 +106,107 @@ class BrowserBridge:
         try:
             cookies = await self._context.cookies()
             
-            # 筛选 x5 相关 cookies
+            all_cookies = {}
             x5_cookies = {}
             for c in cookies:
                 name = c.get('name', '')
+                value = c.get('value', '')
+                if not name:
+                    continue
+                all_cookies[name] = value
                 name_lower = name.lower()
                 
                 if name_lower.startswith('x5') or 'x5sec' in name_lower or 'sec' in name_lower:
-                    x5_cookies[name] = c.get('value', '')
+                    x5_cookies[name] = value
                     logger.debug(f"[BrowserBridge] 获取 cookie: {name}")
-            
-            logger.info(f"[BrowserBridge] 获取到 {len(x5_cookies)} 个 x5 cookies")
-            
-            return x5_cookies
+
+            if x5_cookies:
+                logger.info(f"[BrowserBridge] 获取到 {len(x5_cookies)} 个 x5 cookies")
+                return x5_cookies
+
+            logger.info(f"[BrowserBridge] 未发现 x5 cookies，回退返回 {len(all_cookies)} 个浏览器 cookies")
+            return all_cookies
             
         except Exception as e:
             logger.error(f"[BrowserBridge] 获取 cookies 失败: {e}")
             return {}
+
+    async def apply_cookies_to_context(self, cookies: Dict[str, str], domain: str = ".goofish.com") -> None:
+        """将现有 HTTP cookies 注入到浏览器上下文。"""
+        if not self._context or not cookies:
+            return
+
+        payload = []
+        for name, value in cookies.items():
+            if not name:
+                continue
+            payload.append({"name": name, "value": value, "domain": domain, "path": "/"})
+
+        if not payload:
+            return
+
+        await self._context.add_cookies(payload)
+        logger.info(f"[BrowserBridge] 已向浏览器上下文注入 {len(payload)} 个 cookies")
+
+    async def get_access_token_via_browser(self, device_id: str, cookies: Dict[str, str] | None = None) -> str:
+        """在浏览器上下文中请求 accessToken。"""
+        page = await self.connect_to_browser_pool()
+        if not page:
+            return ""
+
+        try:
+            if cookies:
+                await self.apply_cookies_to_context(cookies)
+
+            await page.goto("https://www.goofish.com", wait_until="domcontentloaded", timeout=30000)
+
+            token_cookie = await self.get_captcha_cookies()
+            full_token = token_cookie.get("_m_h5_tk", "") if token_cookie else ""
+            if not full_token and self._context:
+                all_cookies = await self._context.cookies()
+                for cookie in all_cookies:
+                    if cookie.get("name") == "_m_h5_tk":
+                        full_token = cookie.get("value", "")
+                        break
+
+            token = full_token.split("_")[0] if full_token else ""
+            if not token:
+                return ""
+
+            api = "mtop.taobao.idlemessage.pc.login.token"
+            app_key = "34839810"
+            ws_app_key = "444e9908a51d1cb236a27862abc769c9"
+            timestamp = str(int(time.time() * 1000))
+            data_obj = {"appKey": ws_app_key, "deviceId": device_id}
+            data = json.dumps(data_obj, separators=(",", ":"))
+            sign = hashlib.md5(f"{token}&{timestamp}&{app_key}&{data}".encode()).hexdigest()
+            url = (
+                f"https://h5api.m.goofish.com/h5/{api.lower()}/1.0/"
+                f"?jsv=2.7.2&appKey={app_key}&t={timestamp}&sign={sign}&v=1.0"
+                f"&type=originaljson&accountSite=xianyu&dataType=json&timeout=20000"
+                f"&api={api}&sessionOption=AutoLoginOnly"
+            )
+            result = await page.evaluate(
+                """async ({ url, data }) => {
+                    try {
+                        const body = new URLSearchParams({ data });
+                        const resp = await fetch(url, {
+                            method: 'POST',
+                            credentials: 'include',
+                            headers: { 'content-type': 'application/x-www-form-urlencoded' },
+                            body,
+                        });
+                        return await resp.json();
+                    } catch (error) {
+                        return { error: String(error) };
+                    }
+                }""",
+                {"url": url, "data": data},
+            )
+            return result.get("data", {}).get("accessToken", "") if isinstance(result, dict) else ""
+        finally:
+            await self.close_captcha_page()
+            await self.disconnect()
     
     async def close_captcha_page(self):
         """关闭验证页面（不关闭浏览器容器）"""

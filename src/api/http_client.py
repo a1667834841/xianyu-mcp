@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 import requests
+from src.browser_bridge import BrowserBridge
 
 from .types import Conversation, ChatMessage, TextContent, ImageContent
 
@@ -49,12 +50,18 @@ def get_data_dir() -> Path:
 
 def load_local_auth() -> Dict[str, str]:
     """从本地加载 cookies"""
+    data = load_local_auth_data()
+    return data.get("cookies", data) if data else {}
+
+
+def load_local_auth_data() -> Dict[str, Any]:
+    """从本地加载完整鉴权数据"""
     auth_file = get_data_dir() / "auth.json"
     if auth_file.exists():
         try:
             data = json.loads(auth_file.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                return data.get("cookies", data)
+                return data
         except json.JSONDecodeError:
             logger.warning(f"本地鉴权文件损坏")
     return {}
@@ -64,6 +71,7 @@ def save_local_auth(cookies: Dict[str, str]):
     """持久化 cookies 到本地"""
     data_dir = get_data_dir()
     auth_file = data_dir / "auth.json"
+    existing = load_local_auth_data()
     
     data_dir.mkdir(parents=True, exist_ok=True)
     
@@ -75,6 +83,8 @@ def save_local_auth(cookies: Dict[str, str]):
         "updated_at": now.isoformat(),
         "expires_at": expires_at.isoformat(),
     }
+    if existing.get("device_id"):
+        data["device_id"] = existing["device_id"]
     
     auth_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info(f"[HttpClient] Cookie 已保存到: {auth_file}")
@@ -87,10 +97,13 @@ class HttpClient:
     APP_KEY = "34839810"
     
     def __init__(self, cookies: Dict[str, str] = None, device_id: str = ""):
+        auth_data = {}
         if cookies is None:
-            cookies = load_local_auth()
+            auth_data = load_local_auth_data()
+            cookies = auth_data.get("cookies", auth_data)
         self.cookies = cookies
-        self.device_id = device_id
+        fallback_device_id = f"web_{cookies.get('unb', 'new')}" if isinstance(cookies, dict) else "web_new"
+        self.device_id = device_id or auth_data.get("device_id") or fallback_device_id
         self.session = requests.Session()
         if cookies:
             self.session.cookies.update(cookies)
@@ -291,7 +304,6 @@ class HttpClient:
     def _save_cookies_to_file(self):
         """保存 cookies 到 auth.json"""
         try:
-            from src.utils import save_local_auth
             save_local_auth(self.cookies)
             logger.debug("[HttpClient] cookies 已保存到文件")
         except Exception as e:
@@ -529,7 +541,18 @@ class HttpClient:
         }
         
         resp = await self._send_request(api, data)
-        return resp.get("data", {}).get("accessToken", "")
+        token = resp.get("data", {}).get("accessToken", "")
+        if token:
+            self._token = token
+            return token
+
+        bridge = BrowserBridge()
+        browser_token = await bridge.get_access_token_via_browser(self.device_id or "default_device", self.cookies)
+        if browser_token:
+            self._token = browser_token
+            return browser_token
+
+        return ""
     
     def _get_login_params(self) -> Dict[str, str]:
         """获取登录参数 - 访问 mini_login.htm 获取初始 cookie 和参数"""
@@ -808,13 +831,33 @@ class HttpClient:
         }
         
         import os
-        filename = os.path.basename(image_path)
+        import tempfile
         
-        with open(image_path, "rb") as f:
-            files = {"file": (filename, f, "image/png")}
-            resp = self.session.post(upload_url, params=params, files=files, timeout=30)
-            resp.raise_for_status()
-            return resp.json()
+        temp_file = None
+        if image_path.startswith(("http://", "https://")):
+            try:
+                import urllib.request
+                req = urllib.request.Request(image_path, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    content = response.read()
+                suffix = os.path.splitext(image_path.split("?")[0])[1] or ".jpg"
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+                temp_file.write(content)
+                temp_file.close()
+                image_path = temp_file.name
+            except Exception as e:
+                raise RuntimeError(f"下载图片失败: {e}")
+
+        try:
+            filename = os.path.basename(image_path)
+            with open(image_path, "rb") as f:
+                files = {"file": (filename, f, "image/png")}
+                resp = self.session.post(upload_url, params=params, files=files, timeout=30)
+                resp.raise_for_status()
+                return resp.json()
+        finally:
+            if temp_file:
+                os.unlink(temp_file.name)
     
     async def get_public_channel(self, title: str, images_info: List[Dict]) -> Dict[str, Any]:
         """获取商品分类推荐"""
