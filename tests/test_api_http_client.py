@@ -1,6 +1,7 @@
 import pytest
 import hashlib
 import json
+import asyncio
 from unittest.mock import AsyncMock, patch
 from src.api.http_client import HttpClient, save_local_auth
 
@@ -222,17 +223,33 @@ class TestHttpClientConversation:
 
 class TestHttpClientAccessToken:
     @pytest.mark.asyncio
-    async def test_get_access_token_falls_back_to_browser_bridge(self):
+    async def test_get_access_token_returns_empty_when_api_has_no_token(self):
         client = HttpClient(cookies={"unb": "4188939592", "_m_h5_tk": "token_123"}, device_id="web_4188939592")
 
         with patch.object(client, "_send_request", new_callable=AsyncMock) as mock_send:
             mock_send.return_value = {"ret": ["FAIL_SYS_USER_VALIDATE"], "data": {}}
 
-            fake_bridge = AsyncMock()
-            fake_bridge.get_access_token_via_browser.return_value = "oauth_k1:browser_token_value"
+            token = await client.get_access_token()
 
-            with patch("src.api.http_client.BrowserBridge", return_value=fake_bridge):
-                token = await client.get_access_token()
+        assert token == ""
 
-        assert token == "oauth_k1:browser_token_value"
-        fake_bridge.get_access_token_via_browser.assert_awaited_once_with("web_4188939592", client.cookies)
+    @pytest.mark.asyncio
+    async def test_handle_captcha_serializes_concurrent_recovery(self):
+        client = HttpClient(cookies={"unb": "4188939592", "_m_h5_tk": "token_123"}, device_id="web_4188939592")
+
+        calls = 0
+
+        async def fake_handle(url, max_retries=3):
+            nonlocal calls
+            calls += 1
+            await asyncio.sleep(0.01)
+            return True
+
+        with patch("src.api.captcha_handler.CaptchaHandler.handle", new=AsyncMock(side_effect=fake_handle)):
+
+            await asyncio.gather(
+                client._handle_captcha("https://example.com/captcha"),
+                client._handle_captcha("https://example.com/captcha"),
+            )
+
+        assert calls == 1

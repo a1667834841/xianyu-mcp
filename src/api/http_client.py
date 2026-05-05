@@ -8,13 +8,14 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 import requests
-from src.browser_bridge import BrowserBridge
 
 from .types import Conversation, ChatMessage, TextContent, ImageContent
 
 logger = logging.getLogger(__name__)
 
 _env_loaded = False
+_captcha_recovery_lock: asyncio.Lock | None = None
+_captcha_recovery_task: asyncio.Task | None = None
 
 def _load_env():
     """加载 .env 文件"""
@@ -285,14 +286,31 @@ class HttpClient:
         if not verification_url:
             logger.error("[HttpClient] 验证 URL 为空")
             return False
+
+        global _captcha_recovery_lock
+        global _captcha_recovery_task
+        if _captcha_recovery_lock is None:
+            _captcha_recovery_lock = asyncio.Lock()
         
         try:
-            from .captcha_handler import CaptchaHandler
-            
-            handler = CaptchaHandler(self)
-            success = await handler.handle(verification_url, max_retries=3)
-            
-            return success
+            async with _captcha_recovery_lock:
+                if _captcha_recovery_task and not _captcha_recovery_task.done():
+                    task = _captcha_recovery_task
+                else:
+                    from .captcha_handler import CaptchaHandler
+
+                    handler = CaptchaHandler(self)
+                    _captcha_recovery_task = asyncio.create_task(
+                        handler.handle(verification_url, max_retries=3)
+                    )
+                    task = _captcha_recovery_task
+
+            try:
+                return await task
+            finally:
+                async with _captcha_recovery_lock:
+                    if _captcha_recovery_task is task and task.done():
+                        _captcha_recovery_task = None
             
         except ImportError as e:
             logger.error(f"[HttpClient] 无法导入 CaptchaHandler: {e}")
@@ -539,18 +557,12 @@ class HttpClient:
             "appKey": "444e9908a51d1cb236a27862abc769c9",
             "deviceId": self.device_id or "default_device",
         }
-        
+
         resp = await self._send_request(api, data)
         token = resp.get("data", {}).get("accessToken", "")
         if token:
             self._token = token
             return token
-
-        bridge = BrowserBridge()
-        browser_token = await bridge.get_access_token_via_browser(self.device_id or "default_device", self.cookies)
-        if browser_token:
-            self._token = browser_token
-            return browser_token
 
         return ""
     
