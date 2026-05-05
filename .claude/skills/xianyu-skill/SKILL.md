@@ -9,144 +9,209 @@ description: Use when managing one or more Xianyu accounts via MCP, especially w
 
 单用户模式，所有业务走 HTTP MTOP API 或 WebSocket RPC，浏览器仅用于滑块/风控。接口失败直接返回错误，不做隐式浏览器降级。
 
-## 所有工具
+## 调用方式
 
-调用方式：通过 MCP Streamable HTTP 接口调用，curl 直接 POST JSON-RPC 到 `/mcp`。
-
-**前置步骤**（首次调用前需建立会话）：
-```bash
-# 1. initialize 建立会话
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"curl","version":"1.0"},"capabilities":{}}}'
-
-# 2. notifications/initialized 确认初始化完成
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
-```
-
-之后共用同一 curl 格式调用各工具：
+**在项目根目录下**使用 `scripts/mcp-dev call` 脚本调用所有工具。
 
 ```bash
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/call",
-    "params": {
-      "name": "<工具名>",
-      "arguments": { <参数> }
-    }
-  }'
+scripts/mcp-dev call <tool-name> [--key value ...]
 ```
+
+**参数格式：** `--参数名 值`，字符串参数（`item_url`、`keyword`、`title`、`images_paths`、`content`、`conversation_id`、`target_id`）直接传递，其他类型（数字、布尔）按原值传递。
+
+**环境变量：**
+- `MCP_DEV_URL` - 完整 MCP URL（默认 `http://127.0.0.1:8080/mcp`）
+- `MCP_HOST_PORT` - 端口（默认 `8080`）
+
+---
 
 ### `xianyu_login`
-HTTP 扫码登录。返回 `logged_in: true` 或 `logged_in: false` + `qr_code.public_url`。**只把 `public_url` 发给用户扫码**，不传 `qr_code.url`。
+
+扫码登录。返回 `logged_in: true` 或 `logged_in: false` + `qr_code.public_url`。**只把 `public_url` 发给用户扫码**，不传 `qr_code.url`。
+
 ```bash
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xianyu_login","arguments":{}}}'
+scripts/mcp-dev call xianyu_login
 ```
+
+---
 
 ### `xianyu_check_session`
+
 检查登录态。返回 `valid: true/false`。无参数。
+
 ```bash
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xianyu_check_session","arguments":{}}}'
+scripts/mcp-dev call xianyu_check_session
 ```
+
+---
 
 ### `xianyu_refresh_token`
+
 刷新 Token，纯 HTTP。返回 `method: "http"`。无参数。
+
 ```bash
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xianyu_refresh_token","arguments":{}}}'
+scripts/mcp-dev call xianyu_refresh_token
 ```
+
+---
 
 ### `xianyu_search`
-关键词搜索商品。参数：`keyword`(必填)、`rows`(默认30)、`min_price`/`max_price`、`free_ship`、`sort_field`(仅`pub_time`/`price`)、`sort_order`。不支持按曝光度排序，需二次处理 `exposure_score`。`rows>30` 自动翻页，结果去重。
+
+关键词搜索商品。
+
+| 参数 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `--keyword` | 是 | - | 搜索关键词 |
+| `--rows` | 否 | 30 | 返回条数 |
+| `--min_price` | 否 | - | 最低价格（元） |
+| `--max_price` | 否 | - | 最高价格（元） |
+| `--free_ship` | 否 | false | 是否包邮 |
+| `--sort_field` | 否 | - | 排序字段（`pub_time`/`price`） |
+| `--sort_order` | 否 | - | 排序方向（`asc`/`desc`） |
+
+> 注意：不支持按曝光度排序，需收到结果后按 `exposure_score` 本地排序。`rows>30` 自动翻页合并去重。
+
 ```bash
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xianyu_search","arguments":{"keyword":"手机壳","rows":10}}}'
+scripts/mcp-dev call xianyu_search --keyword 手机壳 --rows 10
 ```
+
+```bash
+scripts/mcp-dev call xianyu_search --keyword iPad --min_price 500 --max_price 3000 --free_ship true
+```
+
+---
 
 ### `xianyu_suggest_keywords`
-搜索联想词。参数：`input_words`(默认`"x"`)。返回字符串数组。
+
+搜索联想词。
+
+| 参数 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `--input_words` | 否 | `"x"` | 输入词 |
+
 ```bash
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xianyu_suggest_keywords","arguments":{"input_words":"手机"}}}'
+scripts/mcp-dev call xianyu_suggest_keywords --input_words 手机
 ```
+
+---
 
 ### `xianyu_get_detail`
-商品详情。参数：`item_url`。返回完整 `itemDO`/`sellerDO`。
+
+商品详情。
+
+| 参数 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `--item_url` | 是 | - | 商品链接（支持 `goofish.com` 和 `xianyu.com`） |
+
 ```bash
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xianyu_get_detail","arguments":{"item_url":"https://www.goofish.com/item?id=1047155930582"}}}'
+scripts/mcp-dev call xianyu_get_detail --item_url "https://www.goofish.com/item?id=1047155930582"
 ```
+
+---
 
 ### `xianyu_publish`
-HTTP 发布商品，**无浏览器降级，无 `item_url` 参数**。必填：`images_paths`(逗号分隔)、`title`。可选：`current_price`、`original_price`、`shipping`(默认包邮)、`self_pickup`、`post_price`。返回 `method: "http"`。
+
+HTTP 发布商品，**无浏览器降级，无 `item_url` 参数**。接口失败直接抛异常。
+
+| 参数 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `--images_paths` | 是 | - | 图片路径，逗号分隔（至少1张） |
+| `--title` | 是 | - | 商品标题（最多20个中英文单词） |
+| `--current_price` | 否 | - | 现价（元） |
+| `--original_price` | 否 | - | 原价（元） |
+| `--shipping` | 否 | `"包邮"` | 物流选项（`包邮`/`按距离计费`/`一口价`/`无需邮寄`） |
+| `--self_pickup` | 否 | false | 是否支持自提 |
+| `--post_price` | 否 | 0 | 物流费用（一口价时使用） |
+| `--is_original` | 否 | false | 是否声明原创 |
+| `--visibility` | 否 | `公开可见` | 可见范围 |
+
 ```bash
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xianyu_publish","arguments":{"images_paths":"/path/to/img1.jpg,/path/to/img2.jpg","title":"商品标题","current_price":100}}}'
+scripts/mcp-dev call xianyu_publish --images_paths "/path/to/img1.jpg,/path/to/img2.jpg" --title "商品标题" --current_price 100
 ```
+
+> 注意：`publish` 成功不等于已上架，特殊类目可能为草稿状态。
+
+---
 
 ### `xianyu_create_conversation`
-创建对话，WebSocket RPC。参数：`item_url`。自动检测是否自己商品（返回 `CANNOT_CREATE_CONVERSATION_WITH_SELF`），创建后自动发送问候语。
+
+创建对话，WebSocket RPC。自动检测是否自己商品（返回 `CANNOT_CREATE_CONVERSATION_WITH_SELF`），创建后自动发送问候语。
+
+| 参数 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `--item_url` | 是 | - | 商品链接 |
+
 ```bash
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xianyu_create_conversation","arguments":{"item_url":"https://www.goofish.com/item?id=1047155930582"}}}'
+scripts/mcp-dev call xianyu_create_conversation --item_url "https://www.goofish.com/item?id=1047155930582"
 ```
+
+---
 
 ### `xianyu_ws_send`
-发送消息。必填：`target_id`。可选：`content`、`image_url`、`conversation_id`。
+
+发送消息。
+
+| 参数 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `--target_id` | 是 | - | 对方用户 ID |
+| `--content` | 否 | - | 消息文本 |
+| `--image_url` | 否 | - | 图片 URL |
+| `--conversation_id` | 否 | - | 对话 ID（可从 `xianyu_list_conversations` 获取） |
+
 ```bash
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xianyu_ws_send","arguments":{"target_id":"660749856","content":"你好","conversation_id":"61066151753"}}}'
+scripts/mcp-dev call xianyu_ws_send --target_id "660749856" --content "你好" --conversation_id "61066151753"
 ```
+
+---
 
 ### `xianyu_ws_status`
-WebSocket 连接状态。返回 `connected`/`status`/`last_error`/`started_at`。
+
+WebSocket 连接状态。返回 `connected`/`status`/`last_error`/`started_at`。无参数。
+
 ```bash
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xianyu_ws_status","arguments":{}}}'
+scripts/mcp-dev call xianyu_ws_status
 ```
+
+---
 
 ### `xianyu_get_access_token`
-获取 WebSocket token，纯 HTTP。返回 `access_token_masked`。
+
+获取 WebSocket token，纯 HTTP。返回 `access_token_masked`。无参数。
+
 ```bash
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xianyu_get_access_token","arguments":{}}}'
+scripts/mcp-dev call xianyu_get_access_token
 ```
+
+---
 
 ### `xianyu_list_conversations`
-对话列表，优先 WS RPC，失败回退缓存。参数：`limit`(默认20)。返回 `source: "websocket"` 或 `"cache"`。
+
+对话列表，优先 WS RPC，失败回退缓存。
+
+| 参数 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `--limit` | 否 | 20 | 返回条数 |
+
 ```bash
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xianyu_list_conversations","arguments":{"limit":10}}}'
+scripts/mcp-dev call xianyu_list_conversations --limit 10
 ```
+
+---
 
 ### `xianyu_get_messages`
-消息历史，优先 WS RPC，失败回退缓存。必填：`conversation_id`(从`xianyu_list_conversations`获取)。可选：`limit`(默认50)。
+
+消息历史，优先 WS RPC，失败回退缓存。
+
+| 参数 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `--conversation_id` | 是 | - | 对话 ID（从 `xianyu_list_conversations` 获取） |
+| `--limit` | 否 | 50 | 返回条数 |
+
 ```bash
-curl -s -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"xianyu_get_messages","arguments":{"conversation_id":"61066151753","limit":5}}}'
+scripts/mcp-dev call xianyu_get_messages --conversation_id "61066151753" --limit 5
 ```
 
-**自定义端口：** 将 URL 中的 `8080` 替换为实际端口，如 `http://localhost:18091/mcp`。
+---
 
 ## 常见错误
 
