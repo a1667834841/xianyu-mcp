@@ -312,6 +312,24 @@ class TestXianyuApiClient:
         )
 
     @pytest.mark.asyncio
+    async def test_create_conversation_rejects_own_item(self):
+        client = XianyuApiClient()
+        client.http_client.cookies["unb"] = "4188939592"
+
+        with patch.object(client.http_client, "get_item_detail", new_callable=AsyncMock) as mock_detail:
+            mock_detail.return_value = {"sellerDO": {"sellerId": 4188939592}}
+            result = await client.create_conversation(
+                item_url="https://www.goofish.com/item?id=1047155930582"
+            )
+
+        assert result == {
+            "success": False,
+            "error_code": "CANNOT_CREATE_CONVERSATION_WITH_SELF",
+            "item_id": "1047155930582",
+            "message": "无法与自己创建对话，商品为当前账号发布",
+        }
+
+    @pytest.mark.asyncio
     async def test_get_ws_status_returns_correct_snapshot(self):
         """测试 get_ws_status() 返回正确快照"""
         client = XianyuApiClient()

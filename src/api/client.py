@@ -202,6 +202,15 @@ class XianyuApiClient:
                 "message": "无法获取卖家 ID",
             }
 
+        current_user_id = self.http_client.cookies.get("unb")
+        if current_user_id and str(resolved_seller_id) == current_user_id:
+            return {
+                "success": False,
+                "error_code": "CANNOT_CREATE_CONVERSATION_WITH_SELF",
+                "item_id": item_id,
+                "message": "无法与自己创建对话，商品为当前账号发布",
+            }
+
         await self.ensure_ws_started(reason="create_conversation")
         if not self.ws_is_connected():
             return {
