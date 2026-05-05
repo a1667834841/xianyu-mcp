@@ -4,10 +4,12 @@ import time
 from typing import Dict, Any, Optional, List
 
 from .http_client import HttpClient
+from .http_keepalive import HttpKeepaliveService
 from .websocket_client import WebSocketClient
 from .websocket_pool import WebSocketPool
 from .types import Conversation
 from src.browser_bridge import BrowserBridge
+from src.settings import load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +28,18 @@ class XianyuApiClient:
     def __init__(self):
         if self._initialized:
             return
-        
+
+        self.settings = load_settings()
         self.http_client = HttpClient(cookies=None, device_id="")
         self.ws_client = WebSocketClient(self.http_client)
         self.websocket_pool = WebSocketPool()
         self.browser_bridge = BrowserBridge()
+        self.keepalive_service = HttpKeepaliveService(
+            http_client=self.http_client,
+            browser_bridge=self.browser_bridge,
+            interval_minutes=240,
+            max_captcha_retries=3,
+        )
         
         self.ws_status = "disconnected"
         self.ws_last_error = None
@@ -41,13 +50,27 @@ class XianyuApiClient:
     
     async def initialize(self, cookies: Dict[str, str], device_id: str):
         """初始化客户端"""
+        if self._ws_start_task and not self._ws_start_task.done():
+            self._ws_start_task.cancel()
+            try:
+                await self._ws_start_task
+            except asyncio.CancelledError:
+                pass
+
         if self.ws_client and self.ws_client.is_connected:
             await self.ws_client.stop()
-        
+
+        self.settings = load_settings()
         self.http_client = HttpClient(cookies=cookies, device_id=device_id)
         self.ws_client = WebSocketClient(self.http_client)
         
         self.browser_bridge = BrowserBridge()
+        self.keepalive_service = HttpKeepaliveService(
+            http_client=self.http_client,
+            browser_bridge=self.browser_bridge,
+            interval_minutes=240,
+            max_captcha_retries=3,
+        )
         
         self.ws_status = "disconnected"
         self.ws_last_error = None
@@ -58,6 +81,13 @@ class XianyuApiClient:
         """登录 - 纯 HTTP 获取二维码（不依赖浏览器）"""
         if not self.http_client:
             return {"success": False, "message": "客户端未初始化"}
+        session = await self.http_client.check_session()
+        if session.get("valid"):
+            return {
+                "success": True,
+                "logged_in": True,
+                "message": session.get("message", "Cookie 有效"),
+            }
         return await self.http_client.login(timeout=timeout)
     
     async def login_poll(self, t: str, ck: str) -> Dict[str, Any]:
@@ -73,22 +103,17 @@ class XianyuApiClient:
         return await self.http_client.check_session()
     
     async def refresh_token(self) -> Dict[str, Any]:
-        """刷新 Token，API 优先，失败降级浏览器"""
+        """刷新 Token，仅使用 HTTP 路径"""
         if not self.http_client:
             return {"success": False}
-        
+
         try:
             result = await self.http_client.refresh_token()
-            if result.get("success"):
-                result["method"] = "http"
-                return result
         except Exception as e:
-            logger.warning(f"API 刷新失败，降级到浏览器: {e}")
-        
-        if self.browser_bridge:
-            return await self.browser_bridge.refresh_via_browser()
-        
-        return {"success": False, "method": "none"}
+            return {"success": False, "method": "http", "message": str(e)}
+
+        result["method"] = "http"
+        return result
     
     async def search(self, keyword: str, rows: int = 30, **kwargs) -> List[Dict]:
         """搜索商品"""
@@ -115,28 +140,18 @@ class XianyuApiClient:
         shipping: str = "包邮",
         self_pickup: bool = False,
         post_price: float = 0,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
-        """发布商品，API 优先，失败降级浏览器
-        
-        Args:
-            images_paths: 图片路径列表
-            title: 商品标题
-            price: 价格 {"current_price": 100, "original_price": 200}
-            shipping: 物流选项
-            self_pickup: 是否支持自提
-            post_price: 物流费用
-            item_url: 可选的现有商品URL（用于复制发布）
-        """
+        """发布商品，仅使用 HTTP API"""
         if not self.http_client:
             return {"success": False, "message": "客户端未初始化"}
-        
+
         if not images_paths:
             return {"success": False, "message": "需要提供图片路径"}
-        
+
         if not title:
             return {"success": False, "message": "需要提供商品标题"}
-        
+
         try:
             result = await self.http_client.publish(
                 images_paths=images_paths,
@@ -146,29 +161,91 @@ class XianyuApiClient:
                 self_pickup=self_pickup,
                 post_price=post_price,
             )
-            if result.get("success"):
-                result["method"] = "http"
-                return result
         except Exception as e:
-            logger.warning(f"API 发布失败，降级到浏览器: {e}")
-        
-        item_url = kwargs.get("item_url", "")
-        if self.browser_bridge and item_url:
-            kwargs_copy = {k: v for k, v in kwargs.items() if k != "item_url"}
-            return await self.browser_bridge.publish_via_browser(item_url=item_url, **kwargs_copy)
-        
-        return {"success": False, "method": "none"}
+            return {"success": False, "method": "http", "message": str(e)}
+
+        result["method"] = "http"
+        return result
     
-    async def create_conversation(self, item_url: str, seller_id: str = "") -> str:
+    async def create_conversation(self, item_url: str, seller_id: str = "") -> Dict[str, Any]:
         """创建对话"""
         if not self.http_client:
-            return ""
-        
+            return {
+                "success": False,
+                "error_code": "CLIENT_NOT_INITIALIZED",
+                "item_id": "",
+                "message": "客户端未初始化",
+            }
+
         item_id = self._extract_item_id(item_url)
-        return await self.http_client.create_conversation(
-            seller_id=seller_id, 
-            item_id=item_id
+        if not item_id:
+            return {
+                "success": False,
+                "error_code": "INVALID_ITEM_URL",
+                "item_id": "",
+                "message": "无效的商品链接",
+            }
+
+        resolved_seller_id = seller_id
+        if not resolved_seller_id:
+            detail = await self.http_client.get_item_detail(item_id=item_id)
+            seller = detail.get("sellerDO", {}) if isinstance(detail, dict) else {}
+            raw_seller_id = seller.get("sellerId")
+            if raw_seller_id is not None:
+                resolved_seller_id = str(raw_seller_id)
+
+        if not resolved_seller_id:
+            return {
+                "success": False,
+                "error_code": "SELLER_ID_UNAVAILABLE",
+                "item_id": item_id,
+                "message": "无法获取卖家 ID",
+            }
+
+        await self.ensure_ws_started(reason="create_conversation")
+        if not self.ws_is_connected():
+            return {
+                "success": False,
+                "error_code": "CONVERSATION_CREATE_FAILED",
+                "item_id": item_id,
+                "message": "创建对话失败",
+            }
+
+        result = await self.ws_client.create_conversation(
+            seller_id=resolved_seller_id,
+            item_id=item_id,
         )
+        if not result.get("success"):
+            return {
+                "success": False,
+                "error_code": "CONVERSATION_CREATE_FAILED",
+                "item_id": item_id,
+                "message": "创建对话失败",
+            }
+
+        conversation_id = result.get("conversation_id", "")
+        greeting = self.settings.messaging.create_conversation_greeting
+        send_result = await self.ws_send_message(
+            target_id=resolved_seller_id,
+            content=greeting,
+            image_url="",
+            conversation_id=conversation_id,
+        )
+        if not send_result.get("success"):
+            return {
+                "success": False,
+                "error_code": "GREETING_SEND_FAILED",
+                "conversation_id": conversation_id,
+                "item_id": item_id,
+                "message": f"默认问候语发送失败: {send_result.get('message', '未知错误')}",
+            }
+
+        return {
+            "success": True,
+            "conversation_id": conversation_id,
+            "item_id": item_id,
+            "message": "对话已创建并已发送问候语",
+        }
     
     async def list_conversations(self, limit: int = 20, offset: int = 0) -> List[Conversation]:
         """获取对话列表（通过 WebSocket LWP）"""
@@ -252,11 +329,19 @@ class XianyuApiClient:
         """从 URL 提取 item_id"""
         if "item?id=" in item_url:
             return item_url.split("item?id=")[-1].split("&")[0]
+        if "?id=" in item_url:
+            return item_url.split("?id=")[-1].split("&")[0]
+        if "&id=" in item_url:
+            return item_url.split("&id=")[-1].split("&")[0]
         return ""
     
     def get_ws_status(self) -> Dict[str, Any]:
         """返回 WebSocket 当前状态快照。"""
         connected = bool(self.ws_client and self.ws_client.is_connected)
+        internal_error = getattr(self.ws_client, "last_error", None) if self.ws_client else None
+        if not connected and internal_error and not getattr(self.ws_client, "_running", False):
+            self.ws_status = "failed"
+            self.ws_last_error = internal_error
         status = "connected" if connected else self.ws_status
         return {
             "connected": connected,
@@ -278,13 +363,17 @@ class XianyuApiClient:
         self.ws_status = "starting"
         self.ws_last_error = None
         self.ws_started_at = time.strftime("%Y-%m-%dT%H:%M:%S")
-        self._ws_start_task = asyncio.create_task(self._run_ws_start(reason))
+        self._ws_start_task = asyncio.create_task(self._run_ws_start(reason, self.ws_client))
         return {"success": True, "status": "starting", "reason": reason}
 
-    async def _run_ws_start(self, reason: str) -> None:
+    async def _run_ws_start(self, reason: str, ws_client=None) -> None:
+        ws_client = ws_client or self.ws_client
         logger.info(f"Starting WebSocket connection (reason: {reason})")
         try:
-            success = await self.ws_client.connect()
+            success = await ws_client.connect()
+            if ws_client is not self.ws_client:
+                logger.info(f"Ignoring stale WebSocket start result (reason: {reason})")
+                return
             if not success:
                 self.ws_status = "failed"
                 self.ws_last_error = "WebSocket connect returned false"
@@ -292,10 +381,19 @@ class XianyuApiClient:
                 return
 
             for _ in range(30):
-                if self.ws_client.is_connected:
+                if ws_client is not self.ws_client:
+                    logger.info(f"Ignoring stale WebSocket start poll (reason: {reason})")
+                    return
+                if ws_client.is_connected:
                     self.ws_status = "connected"
                     self.ws_last_error = None
                     logger.info(f"WebSocket connected successfully (reason: {reason})")
+                    return
+                internal_error = getattr(ws_client, "last_error", None)
+                if internal_error and not getattr(ws_client, "_running", False):
+                    self.ws_status = "failed"
+                    self.ws_last_error = internal_error
+                    logger.error(f"WebSocket initialization failed (reason: {reason}): {internal_error}")
                     return
                 await asyncio.sleep(1)
 
@@ -320,13 +418,21 @@ class XianyuApiClient:
         """停止 WebSocket 监听"""
         try:
             await self.ws_client.stop()
+            self.ws_status = "disconnected"
+            self.ws_last_error = None
             return {"success": True, "message": "监听已停止"}
         except Exception as e:
+            self.ws_status = "failed"
+            self.ws_last_error = str(e)
             return {"success": False, "message": str(e)}
 
     async def ws_send_message(self, target_id: str, content: str = "", image_url: str = "", conversation_id: str = "") -> Dict[str, Any]:
         """通过 WebSocket 发送消息"""
         try:
+            start_result = await self.ensure_ws_started(reason="send_message")
+            if not self.ws_is_connected():
+                message = start_result.get("message") or start_result.get("last_error") or start_result.get("status", "unknown")
+                return {"success": False, "message": f"WebSocket 未连接: {message}"}
             success = await self.ws_client.send_message(target_id, content, image_url, conversation_id)
             return {"success": success, "message": "消息已发送" if success else "发送失败"}
         except Exception as e:
@@ -340,7 +446,21 @@ class XianyuApiClient:
 
     async def close(self):
         """关闭客户端"""
+        await self.stop_keepalive()
         if self.http_client:
             self.http_client.close()
         if self.websocket_pool:
             await self.websocket_pool.stop()
+
+    async def start_keepalive(self) -> bool:
+        if not self.http_client or not self.keepalive_service:
+            return False
+        session = await self.http_client.check_session()
+        if not session.get("valid"):
+            return False
+        self.keepalive_service.start()
+        return True
+
+    async def stop_keepalive(self) -> None:
+        if self.keepalive_service:
+            await self.keepalive_service.stop()
