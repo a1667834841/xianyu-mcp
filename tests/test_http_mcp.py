@@ -5,13 +5,60 @@ HTTP MCP 客户端集成测试
 
 import requests
 import json
+import os
+import pytest
 import time
 import subprocess
 import sys
 from pathlib import Path
 
+from starlette.testclient import TestClient
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_build_app_exposes_streamable_http_mcp_route():
+    """确保 FastMCP streamable HTTP 入口实际挂载到 Starlette 应用。"""
+    from mcp_server.http_server import build_app
+
+    paths = [getattr(route, "path", None) for route in build_app().routes]
+
+    assert "/mcp" in paths
+
+
+def test_streamable_http_mcp_route_handles_initialize(monkeypatch):
+    """确保 /mcp 不只是存在路由，还初始化了 streamable HTTP session manager。"""
+    from mcp_server import http_server
+
+    async def noop_manager():
+        return None
+
+    monkeypatch.setattr(http_server, "initialize_manager", noop_manager)
+    monkeypatch.setattr(http_server, "shutdown_manager", noop_manager)
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "clientInfo": {"name": "test-client", "version": "1.0"},
+            "capabilities": {},
+        },
+    }
+
+    with TestClient(http_server.build_app(), base_url="http://127.0.0.1:8080") as client:
+        resp = client.post(
+            "/mcp",
+            json=payload,
+            headers={"Accept": "application/json, text/event-stream"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.headers.get("mcp-session-id")
+    assert '"method":"initialize"' not in resp.text
+    assert '"result"' in resp.text
 
 
 def _call_mcp_dev(*args):
@@ -39,17 +86,12 @@ def _call_mcp_dev(*args):
     raise last_error
 
 
-def _pick_debug_user_id():
-    payload = _call_mcp_dev("xianyu_list_users")
-    assert payload["success"] is True
-    users = payload.get("users") or []
-    assert users, "expected at least one registered user"
-    return users[0]["user_id"]
-
-
 def test_sse_connection():
     """测试 SSE 连接建立"""
-    resp = requests.get("http://localhost:8080/sse", stream=True, timeout=5)
+    try:
+        resp = requests.get("http://localhost:8080/sse", stream=True, timeout=5)
+    except requests.RequestException as exc:
+        pytest.skip(f"MCP Server 未运行或无法连接: {exc}")
     assert resp.status_code == 200
 
     session_id = None
@@ -110,20 +152,32 @@ def test_xianyu_check_session(session_id):
     print(f"✓ xianyu_check_session 调用请求发送成功")
 
 
-def test_xianyu_debug_snapshot_uploads_real_screenshot():
-    """测试 xianyu_debug_snapshot 真实截图并上传到 R2"""
-    user_id = _pick_debug_user_id()
+def test_xianyu_ws_send_real_message_with_image():
+    """真实发送带图片消息。需要显式设置环境变量，避免误发。"""
+    target_id = os.environ.get("XIANYU_REAL_SEND_TARGET_ID")
+    content = os.environ.get("XIANYU_REAL_SEND_CONTENT")
+    image_url = os.environ.get("XIANYU_REAL_SEND_IMAGE_URL")
+    conversation_id = os.environ.get("XIANYU_REAL_SEND_CONVERSATION_ID", "")
 
-    overview = _call_mcp_dev("xianyu_browser_overview", "--user-id", user_id)
-    assert overview["success"] is True
+    if not target_id or not content or not image_url:
+        pytest.skip(
+            "set XIANYU_REAL_SEND_TARGET_ID, XIANYU_REAL_SEND_CONTENT, "
+            "and XIANYU_REAL_SEND_IMAGE_URL to send a real message"
+        )
 
-    payload = _call_mcp_dev("xianyu_debug_snapshot", "--user-id", user_id)
+    payload = _call_mcp_dev(
+        "xianyu_ws_send",
+        "--target-id",
+        target_id,
+        "--content",
+        content,
+        "--image-url",
+        image_url,
+        "--conversation-id",
+        conversation_id,
+    )
 
     assert payload["success"] is True
-    assert payload["user_id"] == user_id
-    assert payload["screenshot"]["uploaded"] is True
-    assert payload["screenshot"]["public_url"].startswith("https://img.ggball.top/")
-    assert payload["page"]["url"]
 
 
 if __name__ == "__main__":

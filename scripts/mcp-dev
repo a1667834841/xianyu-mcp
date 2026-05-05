@@ -8,6 +8,9 @@ from urllib import parse
 from urllib import request
 
 
+STREAMABLE_HTTP_ACCEPT = "application/json, text/event-stream"
+
+
 def coerce_value(raw):
     lowered = raw.lower()
     if lowered == "true":
@@ -30,6 +33,15 @@ def coerce_value(raw):
     return raw
 
 
+STRING_ARGUMENT_KEYS = {
+    "conversation_id",
+    "target_id",
+    "user_id",
+    "item_id",
+    "seller_id",
+}
+
+
 def parse_call_args(argv):
     if not argv:
         raise ValueError("missing tool name")
@@ -44,7 +56,9 @@ def parse_call_args(argv):
         if index + 1 >= len(argv):
             raise ValueError(f"missing value for {key}")
 
-        arguments[key[2:].replace("-", "_")] = coerce_value(argv[index + 1])
+        argument_key = key[2:].replace("-", "_")
+        raw_value = argv[index + 1]
+        arguments[argument_key] = raw_value if argument_key in STRING_ARGUMENT_KEYS else coerce_value(raw_value)
         index += 2
 
     return tool_name, arguments
@@ -155,17 +169,74 @@ def wait_for_jsonrpc_response(response, request_id):
             return payload
 
 
-def post_json(url, payload):
+def read_sse_events_from_text(text):
+    event = "message"
+    data_lines = []
+    for line in text.splitlines():
+        if not line:
+            if data_lines:
+                yield event, "\n".join(data_lines)
+                event = "message"
+                data_lines = []
+            continue
+
+        field, separator, value = line.partition(":")
+        if not separator:
+            continue
+        if value.startswith(" "):
+            value = value[1:]
+        if field == "event":
+            event = value
+            continue
+        if field == "data":
+            data_lines.append(value)
+
+    if data_lines:
+        yield event, "\n".join(data_lines)
+
+
+def extract_jsonrpc_response(body, request_id):
+    if not body:
+        return {}
+
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        pass
+    else:
+        if payload.get("id") == request_id or "error" in payload:
+            return payload
+
+    for _, data in read_sse_events_from_text(body):
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if payload.get("id") == request_id or "error" in payload:
+            return payload
+
+    raise RuntimeError(f"missing JSON-RPC response for id {request_id}")
+
+
+def post_json_response(url, payload, headers=None):
     encoded_payload = json.dumps(payload).encode("utf-8")
+    request_headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if headers:
+        request_headers.update(headers)
     req = request.Request(
         url,
         data=encoded_payload,
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers=request_headers,
         method="POST",
     )
     with request.urlopen(req, timeout=30) as response:
         body = response.read().decode("utf-8")
-        return response.status, body
+        return response.status, response.headers, body
+
+
+def post_json(url, payload):
+    status, _, body = post_json_response(url, payload)
+    return status, body
 
 
 def call_tool_via_sse(tool_name, arguments, mcp_url):
@@ -192,8 +263,47 @@ def call_tool_via_sse(tool_name, arguments, mcp_url):
         return wait_for_jsonrpc_response(response, 1)
 
 
+def call_tool_via_streamable_http(tool_name, arguments, mcp_url):
+    streamable_headers = {"Accept": STREAMABLE_HTTP_ACCEPT}
+    status, headers, body = post_json_response(
+        mcp_url, build_initialize_payload(), streamable_headers
+    )
+    if status >= 400:
+        raise RuntimeError(f"initialize failed with status {status}")
+
+    extract_jsonrpc_response(body, 1)
+    session_id = headers.get("mcp-session-id")
+    if not session_id:
+        raise RuntimeError("missing mcp-session-id from initialize response")
+
+    session_headers = {
+        "Accept": STREAMABLE_HTTP_ACCEPT,
+        "Mcp-Session-Id": session_id,
+    }
+    status, _, _ = post_json_response(
+        mcp_url, build_initialized_notification(), session_headers
+    )
+    if status >= 400:
+        raise RuntimeError(f"initialized notification failed with status {status}")
+
+    status, _, body = post_json_response(
+        mcp_url, build_request_payload(tool_name, arguments), session_headers
+    )
+    if status >= 400:
+        raise RuntimeError(f"tool call failed with status {status}")
+    return extract_jsonrpc_response(body, 1)
+
+
 def call_tool(tool_name, arguments):
     mcp_url = get_mcp_url()
+    if mcp_url.endswith("/mcp"):
+        try:
+            return call_tool_via_streamable_http(tool_name, arguments, mcp_url)
+        except error.HTTPError as exc:
+            if exc.code == 404:
+                return call_tool_via_sse(tool_name, arguments, mcp_url)
+            raise
+
     payload = json.dumps(build_request_payload(tool_name, arguments)).encode("utf-8")
     req = request.Request(
         mcp_url,

@@ -14,8 +14,10 @@ DEFAULT_TOKEN_FILE_NAME = "token.json"
 DEFAULT_TOKEN_PATH = Path("tokens") / DEFAULT_TOKEN_FILE_NAME
 DEFAULT_CHROME_PROFILE = Path("chrome-profile")
 DEFAULT_KEEPALIVE_ENABLED = True
-DEFAULT_KEEPALIVE_INTERVAL_MINUTES = 10
+DEFAULT_KEEPALIVE_INTERVAL_MINUTES = 240
+DEFAULT_KEEPALIVE_MAX_CAPTCHA_RETRIES = 3
 DEFAULT_SEARCH_MAX_STALE_PAGES = 3
+DEFAULT_CREATE_CONVERSATION_GREETING = "在吗？"
 
 _TRUE_TOKENS = {"1", "true", "yes", "on"}
 _FALSE_TOKENS = {"0", "false", "no", "off"}
@@ -38,6 +40,13 @@ def _path_value(value: Any) -> Path | None:
 
 def _str_value(value: Any) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _coerce_greeting(value: Any, default: str) -> str:
+    if not isinstance(value, str):
+        return default
+    trimmed = value.strip()
+    return trimmed or default
 
 
 def _repo_root_config_path() -> Path:
@@ -154,6 +163,7 @@ class StorageSettings:
 class KeepaliveSettings:
     enabled: bool
     interval_minutes: int
+    max_captcha_retries: int
 
 
 @dataclass(frozen=True)
@@ -162,10 +172,16 @@ class SearchSettings:
 
 
 @dataclass(frozen=True)
+class MessagingSettings:
+    create_conversation_greeting: str
+
+
+@dataclass(frozen=True)
 class AppSettings:
     storage: StorageSettings
     keepalive: KeepaliveSettings
     search: SearchSettings
+    messaging: MessagingSettings
 
 
 def build_user_settings(
@@ -175,7 +191,9 @@ def build_user_settings(
     data_root: Path,
     keepalive_enabled: bool = True,
     keepalive_interval_minutes: int = DEFAULT_KEEPALIVE_INTERVAL_MINUTES,
+    keepalive_max_captcha_retries: int = DEFAULT_KEEPALIVE_MAX_CAPTCHA_RETRIES,
     max_stale_pages: int = DEFAULT_SEARCH_MAX_STALE_PAGES,
+    create_conversation_greeting: str = DEFAULT_CREATE_CONVERSATION_GREETING,
 ) -> AppSettings:
     return AppSettings(
         storage=StorageSettings(
@@ -187,8 +205,15 @@ def build_user_settings(
         keepalive=KeepaliveSettings(
             enabled=keepalive_enabled,
             interval_minutes=keepalive_interval_minutes,
+            max_captcha_retries=keepalive_max_captcha_retries,
         ),
         search=SearchSettings(max_stale_pages=max_stale_pages),
+        messaging=MessagingSettings(
+            create_conversation_greeting=_coerce_greeting(
+                create_conversation_greeting,
+                DEFAULT_CREATE_CONVERSATION_GREETING,
+            )
+        ),
     )
 
 
@@ -209,6 +234,7 @@ def load_settings(config_path: Path | None = None) -> AppSettings:
     storage_cfg = _section("storage")
     keepalive_cfg = _section("keepalive")
     search_cfg = _section("search")
+    messaging_cfg = _section("messaging")
 
     env_data_root = os.environ.get("XIANYU_DATA_ROOT")
     config_data_root = _path_value(storage_cfg.get("data_root"))
@@ -266,6 +292,13 @@ def load_settings(config_path: Path | None = None) -> AppSettings:
                 DEFAULT_KEEPALIVE_INTERVAL_MINUTES,
             ),
         ),
+        max_captcha_retries=_env_int(
+            "XIANYU_KEEPALIVE_MAX_CAPTCHA_RETRIES",
+            _coerce_int(
+                keepalive_cfg.get("max_captcha_retries"),
+                DEFAULT_KEEPALIVE_MAX_CAPTCHA_RETRIES,
+            ),
+        ),
     )
 
     search_settings = SearchSettings(
@@ -277,8 +310,19 @@ def load_settings(config_path: Path | None = None) -> AppSettings:
         ),
     )
 
+    env_greeting = os.environ.get("XIANYU_CREATE_CONVERSATION_GREETING")
+    messaging_settings = MessagingSettings(
+        create_conversation_greeting=_coerce_greeting(
+            env_greeting
+            if env_greeting is not None
+            else messaging_cfg.get("create_conversation_greeting"),
+            DEFAULT_CREATE_CONVERSATION_GREETING,
+        )
+    )
+
     return AppSettings(
         storage=storage_settings,
         keepalive=keepalive_settings,
         search=search_settings,
+        messaging=messaging_settings,
     )

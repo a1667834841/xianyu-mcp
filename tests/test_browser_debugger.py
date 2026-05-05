@@ -44,6 +44,15 @@ async def test_browser_debugger_returns_snapshot_payload(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_browser_debugger_raises_when_r2_upload_returns_none(monkeypatch):
+    for key in [
+        "CF_ACCOUNT_ID",
+        "CF_ACCESS_KEY_ID",
+        "CF_SECRET_ACCESS_KEY",
+        "CF_BUCKET_NAME",
+        "CF_PUBLIC_DOMAIN",
+    ]:
+        monkeypatch.setenv(key, "configured")
+
     browser = FakeBrowser()
     browser.page = FakePage()
     debugger = BrowserDebugger(browser)
@@ -53,6 +62,34 @@ async def test_browser_debugger_raises_when_r2_upload_returns_none(monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match="r2_upload_failed"):
+        await debugger.capture_snapshot(
+            user_id="user-001",
+            slot_id="slot-1",
+            selected_by="explicit",
+            full_page=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_browser_debugger_reports_missing_r2_configuration(monkeypatch):
+    for key in [
+        "CF_ACCOUNT_ID",
+        "CF_ACCESS_KEY_ID",
+        "CF_SECRET_ACCESS_KEY",
+        "CF_BUCKET_NAME",
+        "CF_PUBLIC_DOMAIN",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    browser = FakeBrowser()
+    browser.page = FakePage()
+    debugger = BrowserDebugger(browser)
+
+    monkeypatch.setattr(
+        "src.browser_debugger.upload_image_bytes", lambda **kwargs: None
+    )
+
+    with pytest.raises(RuntimeError, match="r2_not_configured"):
         await debugger.capture_snapshot(
             user_id="user-001",
             slot_id="slot-1",

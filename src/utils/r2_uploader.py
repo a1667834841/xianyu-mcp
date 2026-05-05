@@ -123,6 +123,20 @@ class R2Uploader:
 _global_uploader: Optional[R2Uploader] = None
 
 
+def is_r2_configured() -> bool:
+    """判断 R2 上传所需配置是否完整。"""
+    return all(
+        os.environ.get(key)
+        for key in [
+            "CF_ACCOUNT_ID",
+            "CF_ACCESS_KEY_ID",
+            "CF_SECRET_ACCESS_KEY",
+            "CF_BUCKET_NAME",
+            "CF_PUBLIC_DOMAIN",
+        ]
+    )
+
+
 def get_uploader() -> Optional[R2Uploader]:
     """获取全局 R2 上传器实例"""
     global _global_uploader
@@ -136,9 +150,7 @@ def get_uploader() -> Optional[R2Uploader]:
     bucket_name = os.environ.get("CF_BUCKET_NAME")
     public_domain = os.environ.get("CF_PUBLIC_DOMAIN")
 
-    if not all(
-        [account_id, access_key_id, secret_access_key, bucket_name, public_domain]
-    ):
+    if not is_r2_configured():
         print("[R2] R2 配置不完整，跳过上传")
         return None
 

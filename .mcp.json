@@ -1,12 +1,7 @@
 {
   "mcpServers": {
     "xianyu": {
-      "command": "docker",
-      "args": ["exec", "-i", "xianyu-mcp", "python", "-m", "mcp_server.server"],
-      "env": {
-        "CDP_HOST": "localhost",
-        "CDP_PORT": "9222"
-      }
+      "url": "http://localhost:8080/sse"
     }
   }
 }

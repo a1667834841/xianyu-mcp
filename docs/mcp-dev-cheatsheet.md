@@ -25,7 +25,7 @@ http://127.0.0.1:${MCP_HOST_PORT:-8080}/mcp
 
 如果该 `/mcp` 地址返回 `404`，脚本会自动回退到对应的 `/sse` 流程。
 
-也可以手动指定目标：
+也可以手动指定目标。下面用 `18090` 作为临时覆盖示例，不代表默认端口：
 
 ```bash
 MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_list_users
@@ -71,7 +71,7 @@ MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_list_users
 
 ## E2E 栈
 
-如果要调用 E2E 栈，带上 `MCP_DEV_URL`：
+如果要调用一个非默认端口的 E2E 栈，带上 `MCP_DEV_URL`：
 
 ```bash
 MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_list_users
@@ -115,4 +115,5 @@ MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_search --us
 ## 当前环境注意事项
 
 - 主栈如果没有完整 R2 凭证，`xianyu_login` 可能只返回原始 `qrcodeCheck` 链接
-- 如果需要 `https://img.ggball.top/...` 这种公网二维码，优先用带 `MCP_DEV_URL=http://127.0.0.1:18090/mcp` 的 E2E 栈
+- 默认端口是 `8080`；只有你把服务临时跑在其他端口时，才需要额外设置 `MCP_DEV_URL`
+- 如果需要 `https://img.ggball.top/...` 这种公网二维码，优先用带显式 `MCP_DEV_URL=...` 的 E2E 栈

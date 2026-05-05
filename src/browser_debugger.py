@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from .utils.r2_uploader import upload_image_bytes
+from .utils.r2_uploader import is_r2_configured, upload_image_bytes
 
 
 class BrowserDebugger:
@@ -41,6 +41,8 @@ class BrowserDebugger:
             custom_filename=f"debug-{user_id}",
         )
         if not public_url:
+            if not is_r2_configured():
+                raise RuntimeError("r2_not_configured")
             raise RuntimeError("r2_upload_failed")
 
         return {

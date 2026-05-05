@@ -5,6 +5,7 @@ import src.settings as settings_module
 
 from src.settings import (
     DEFAULT_DATA_ROOT,
+    DEFAULT_KEEPALIVE_MAX_CAPTCHA_RETRIES,
     DEFAULT_KEEPALIVE_INTERVAL_MINUTES,
     DEFAULT_SEARCH_MAX_STALE_PAGES,
     DEFAULT_USER_ID,
@@ -32,7 +33,19 @@ def test_keepalive_and_search_env_override_config(tmp_path, monkeypatch):
 
     assert settings.keepalive.enabled is True
     assert settings.keepalive.interval_minutes == 25
+    assert settings.keepalive.max_captcha_retries == 3
     assert settings.search.max_stale_pages == 7
+
+
+def test_keepalive_defaults_include_http_retry_limit(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({}))
+
+    settings = load_settings(config_path=config_path)
+
+    assert settings.keepalive.enabled is True
+    assert settings.keepalive.interval_minutes == 240
+    assert settings.keepalive.max_captcha_retries == 3
 
 
 def test_keepalive_invalid_enabled_env_falls_back_to_config(tmp_path, monkeypatch):
@@ -240,3 +253,78 @@ def test_load_settings_prefers_legacy_when_repo_root_missing(tmp_path, monkeypat
 
     assert settings.storage.user_id == "legacy-user"
     assert settings.storage.data_root == Path(tmp_path / "legacy-root")
+
+
+def test_load_settings_defaults_create_conversation_greeting(tmp_path, monkeypatch):
+    monkeypatch.delenv("XIANYU_CREATE_CONVERSATION_GREETING", raising=False)
+
+    settings = load_settings(config_path=tmp_path / "missing.json")
+
+    assert settings.messaging.create_conversation_greeting == "在吗？"
+
+
+def test_load_settings_prefers_configured_create_conversation_greeting(tmp_path, monkeypatch):
+    monkeypatch.delenv("XIANYU_CREATE_CONVERSATION_GREETING", raising=False)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "messaging": {
+                    "create_conversation_greeting": "你好，请问还在吗？"
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(config_path=config_path)
+
+    assert settings.messaging.create_conversation_greeting == "你好，请问还在吗？"
+
+
+def test_load_settings_prefers_env_create_conversation_greeting_over_config(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "messaging": {
+                    "create_conversation_greeting": "你好，请问还在吗？"
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XIANYU_CREATE_CONVERSATION_GREETING", "在的，宝贝还在")
+
+    settings = load_settings(config_path=config_path)
+
+    assert settings.messaging.create_conversation_greeting == "在的，宝贝还在"
+
+
+def test_load_settings_blank_create_conversation_greeting_falls_back_to_default(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "messaging": {
+                    "create_conversation_greeting": "   "
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("XIANYU_CREATE_CONVERSATION_GREETING", raising=False)
+
+    settings = load_settings(config_path=config_path)
+
+    assert settings.messaging.create_conversation_greeting == "在吗？"
+
+    monkeypatch.setenv("XIANYU_CREATE_CONVERSATION_GREETING", "   ")
+
+    env_settings = load_settings(config_path=config_path)
+
+    assert env_settings.messaging.create_conversation_greeting == "在吗？"
+    assert env_settings.keepalive.max_captcha_retries == DEFAULT_KEEPALIVE_MAX_CAPTCHA_RETRIES

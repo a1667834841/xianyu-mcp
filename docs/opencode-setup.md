@@ -113,6 +113,7 @@ Skills 通过 `skill` 工具按需加载。OpenCode 会自动显示其已安装 
 ```
 
 - 默认请求地址为 `http://127.0.0.1:${MCP_HOST_PORT:-8080}/mcp`
+- 若服务临时监听在非 `8080` 端口，可通过 `MCP_DEV_URL=http://127.0.0.1:<port>/mcp` 覆盖
 - 命令行参数使用 `--kebab-case value` 形式，脚本自动转换为 `snake_case`
 
 ## 常见问题

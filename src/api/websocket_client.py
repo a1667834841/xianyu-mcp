@@ -54,6 +54,7 @@ class WebSocketClient:
         self._bg_tasks: List[asyncio.Task] = []
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 10
+        self.last_error: Optional[str] = None
     
     def _get_headers(self) -> Dict[str, str]:
         """获取 WebSocket headers"""
@@ -103,6 +104,7 @@ class WebSocketClient:
             )
             
             self._running = True
+            self.last_error = None
             self._reconnect_attempts = 0
             
             # 启动后台任务：消息循环 + 异步初始化 + 心跳
@@ -118,6 +120,7 @@ class WebSocketClient:
             logger.error(f"[WebSocket] 连接错误: {e}")
             self._running = False
             self._connected = False
+            self.last_error = str(e)
             self.ws = None
             return False
     
@@ -129,6 +132,7 @@ class WebSocketClient:
             
             if not await self._init_connection():
                 logger.error("[WebSocket] 初始化失败")
+                self.last_error = self.last_error or "WebSocket 初始化失败"
                 self._running = False
                 if self.ws:
                     await self.ws.close()
@@ -141,6 +145,8 @@ class WebSocketClient:
         except Exception as e:
             logger.error(f"[WebSocket] 异步初始化错误: {e}")
             self._running = False
+            self._connected = False
+            self.last_error = str(e)
     
     async def _init_connection(self) -> bool:
         """初始化连接 - 发送注册和同步消息"""
@@ -150,9 +156,10 @@ class WebSocketClient:
         token = await self.http_client.get_access_token()
         if not token:
             logger.error("[WebSocket] 无法获取 accessToken")
+            self.last_error = "accessToken 获取失败"
             return False
         
-        logger.info(f"[WebSocket] 获取 accessToken 成功: {token[:20]}...")
+        logger.info("[WebSocket] 获取 accessToken 成功")
         
         self._my_id = self.http_client.cookies.get("unb", "")
         self._device_id = self.http_client.device_id
@@ -297,6 +304,8 @@ class WebSocketClient:
                         "code": message_dict.get("code"),
                         "raw": message_dict
                     })
+                if message_dict.get("lwp") == "/r/SingleChatConversation/create":
+                    logger.info(f"[WebSocket RPC] create conversation raw response: {json.dumps(message_dict, ensure_ascii=False)}")
                 del self._pending_requests[mid]
                 logger.info(f"[WebSocket RPC] 收到响应 MID={mid}")
                 return
@@ -317,6 +326,8 @@ class WebSocketClient:
             data_list = push_package.get("data", [])
             
             logger.info(f"[WebSocket] 收到 {len(data_list)} 条推送消息")
+            if len(data_list) == 1:
+                logger.info(f"[WebSocket] 单条推送原文: {json.dumps(data_list[0], ensure_ascii=False)}")
             
             for item in data_list:
                 raw_data = item.get("data")
@@ -576,6 +587,48 @@ class WebSocketClient:
             "nextCursor": next_cursor,
             "hasMore": has_more,
         }
+
+    async def create_conversation(self, seller_id: str, item_id: str) -> Dict[str, Any]:
+        """通过 WebSocket RPC 创建单聊会话。"""
+        if not self.ws or not self._running:
+            logger.error("[WebSocket] WebSocket 未连接")
+            return {"success": False, "error": "WebSocket 未连接"}
+        if not self._my_id:
+            self._my_id = self.http_client.cookies.get("unb", "")
+        if not self._my_id or not seller_id or not item_id:
+            return {"success": False, "error": "缺少创建对话必要参数"}
+
+        body = [
+            {
+                "pairFirst": f"{self._my_id}@goofish",
+                "pairSecond": f"{seller_id}@goofish",
+                "bizType": "1",
+                "extension": {"itemId": str(item_id), "orderId": "", "source": ""},
+                "ctx": {"appVersion": "1.0", "platform": "web"},
+            }
+        ]
+
+        result = await self.send_rpc("/r/SingleChatConversation/create", body)
+        logger.info(f"[WebSocket RPC] create conversation parsed result: {json.dumps(result, ensure_ascii=False)}")
+        if not result.get("success"):
+            return result
+
+        body_payload = result.get("body")
+        cid = ""
+        if isinstance(body_payload, dict):
+            single_chat = body_payload.get("singleChatConversation", {})
+            if isinstance(single_chat, dict):
+                cid = single_chat.get("cid", "")
+            if not cid:
+                cid = body_payload.get("cid", "")
+        elif isinstance(body_payload, list) and body_payload:
+            cid = body_payload[0].get("cid", "")
+
+        conversation_id = cid.split("@")[0] if "@" in cid else cid
+        if not conversation_id:
+            return {"success": False, "error": "响应中缺少 conversation_id", "raw": body_payload}
+
+        return {"success": True, "conversation_id": conversation_id}
     
     async def send_message(
         self,
@@ -590,37 +643,52 @@ class WebSocketClient:
             return False
         
         try:
-            encoded_data = encode_custom_message(content, image_url)
+            # 构建消息内容 (匹配参考实现格式)
+            if image_url:
+                msg_content = {
+                    "contentType": 2,
+                    "image": {"pics": [{"type": 0, "url": image_url, "width": 100, "height": 100}]}
+                }
+            else:
+                msg_content = {
+                    "contentType": 1,
+                    "text": {"text": content}
+                }
+            
+            encoded_data = base64.b64encode(json.dumps(msg_content).encode("utf-8")).decode("utf-8")
             _cid = cid if cid else target_id
             
-            msg = {
-                "lwp": "/r/MessageSend/sendByReceiverScope",
-                "headers": {"mid": generate_mid()},
-                "body": [
-                    {
-                        "uuid": generate_uuid(),
-                        "cid": f"{_cid}@goofish",
-                        "conversationType": 1,
-                        "content": {
-                            "contentType": 101,
-                            "custom": {"type": 2, "data": encoded_data},
-                        },
-                        "redPointPolicy": 0,
-                        "extension": {"extJson": "{}"},
-                        "ctx": {"appVersion": "1.0", "platform": "web"},
-                        "mtags": {},
-                        "msgReadStatusSetting": 1,
+            body = [
+                {
+                    "uuid": generate_uuid(),
+                    "cid": f"{_cid}@goofish",
+                    "conversationType": 1,
+                    "content": {
+                        "contentType": 101,
+                        "custom": {
+                            "type": 1,
+                            "data": encoded_data
+                        }
                     },
-                    {"actualReceivers": [f"{target_id}@goofish", f"{self._my_id}@goofish"]},
-                ],
-            }
+                    "redPointPolicy": 0,
+                    "extension": {"extJson": "{}"},
+                    "ctx": {"appVersion": "1.0", "platform": "web"},
+                    "mtags": {},
+                    "msgReadStatusSetting": 1,
+                },
+                {"actualReceivers": [f"{target_id}@goofish", f"{self._my_id}@goofish"]}
+            ]
             
-            await self.ws.send(json.dumps(msg))
-            logger.info(f"[WebSocket] 消息已发送 -> {target_id}")
-            return True
+            result = await self.send_rpc("/r/MessageSend/sendByReceiverScope", body)
+            if result.get("success"):
+                logger.info(f"[WebSocket] 消息发送成功 -> {target_id}")
+                return True
+            else:
+                logger.error(f"[WebSocket] 消息发送失败: {result.get('error')}")
+                return False
         
         except Exception as e:
-            logger.error(f"[WebSocket] 发送消息失败: {e}")
+            logger.error(f"[WebSocket] 发送消息异常: {e}")
             return False
     
     def on_message(self, handler: Callable):
@@ -648,7 +716,9 @@ class WebSocketClient:
             message_id="",
             conversation_id=event["cid"],
             sender_id=event["sender_id"],
+            sender_nick=event.get("sender_name", ""),
             receiver_id=self._my_id,
+            receiver_nick="",
             content=segments[0].content if segments else None,
             timestamp=event["timestamp"],
             is_read=False,

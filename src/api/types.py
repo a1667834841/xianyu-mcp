@@ -33,6 +33,8 @@ class ChatMessage:
     sender_id: str
     receiver_id: str
     content: Message
+    sender_nick: str = ""
+    receiver_nick: str = ""
     timestamp: float = 0.0
     is_read: bool = False
 

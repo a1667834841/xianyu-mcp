@@ -54,6 +54,29 @@ def test_parse_call_converts_flag_names_and_values():
     }
 
 
+def test_parse_call_keeps_numeric_id_arguments_as_strings():
+    module = load_module()
+
+    tool_name, arguments = module.parse_call_args(
+        [
+            "xianyu_ws_send",
+            "--target-id",
+            "60971615689",
+            "--conversation-id",
+            "60971615689",
+            "--rows",
+            "5",
+        ]
+    )
+
+    assert tool_name == "xianyu_ws_send"
+    assert arguments == {
+        "target_id": "60971615689",
+        "conversation_id": "60971615689",
+        "rows": 5,
+    }
+
+
 def test_parse_call_rejects_missing_flag_value():
     module = load_module()
 
@@ -63,6 +86,24 @@ def test_parse_call_rejects_missing_flag_value():
         assert "missing value" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_get_mcp_url_defaults_to_localhost_8080(monkeypatch):
+    module = load_module()
+
+    monkeypatch.delenv("MCP_DEV_URL", raising=False)
+    monkeypatch.delenv("MCP_HOST_PORT", raising=False)
+
+    assert module.get_mcp_url() == "http://127.0.0.1:8080/mcp"
+
+
+def test_get_mcp_url_uses_host_port_override(monkeypatch):
+    module = load_module()
+
+    monkeypatch.delenv("MCP_DEV_URL", raising=False)
+    monkeypatch.setenv("MCP_HOST_PORT", "18090")
+
+    assert module.get_mcp_url() == "http://127.0.0.1:18090/mcp"
 
 
 def test_build_request_payload_uses_tools_call_shape():
@@ -136,9 +177,14 @@ def test_read_sse_event_preserves_data_whitespace():
 def test_call_tool_posts_json_rpc_payload(monkeypatch):
     module = load_module()
     monkeypatch.setenv("MCP_DEV_URL", "http://127.0.0.1:8080/mcp")
-    captured = {}
+    captured = []
 
     class StubResponse:
+        def __init__(self, body=b"", status=200, headers=None):
+            self._body = body
+            self.status = status
+            self.headers = headers or {}
+
         def __enter__(self):
             return self
 
@@ -146,23 +192,51 @@ def test_call_tool_posts_json_rpc_payload(monkeypatch):
             return False
 
         def read(self):
-            return b'{"result": {"ok": true}}'
+            return self._body
 
     def fake_urlopen(req, timeout=0):
-        captured["request"] = req
-        captured["timeout"] = timeout
-        return StubResponse()
+        captured.append((req, timeout))
+        if len(captured) == 1:
+            return StubResponse(
+                body=(
+                    b"event: message\n"
+                    b'data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05"}}\n'
+                    b"\n"
+                ),
+                headers={"mcp-session-id": "test-session"},
+            )
+        if len(captured) == 2:
+            return StubResponse(status=202, headers={"mcp-session-id": "test-session"})
+        return StubResponse(
+            body=(
+                b"event: message\n"
+                b'data: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n'
+                b"\n"
+            ),
+            headers={"mcp-session-id": "test-session"},
+        )
 
     monkeypatch.setattr(module.request, "urlopen", fake_urlopen)
 
     response = module.call_tool("xianyu_check_session", {"user_id": "user-001"})
 
-    request_obj = captured["request"]
-    assert request_obj.full_url == "http://127.0.0.1:8080/mcp"
-    assert request_obj.get_method() == "POST"
-    assert request_obj.get_header("Content-type") == "application/json"
-    assert request_obj.get_header("Accept") == "application/json"
-    assert json.loads(request_obj.data.decode("utf-8")) == {
+    assert [req.full_url for req, _ in captured] == [
+        "http://127.0.0.1:8080/mcp",
+        "http://127.0.0.1:8080/mcp",
+        "http://127.0.0.1:8080/mcp",
+    ]
+    assert [req.get_method() for req, _ in captured] == ["POST", "POST", "POST"]
+    assert all(req.get_header("Content-type") == "application/json" for req, _ in captured)
+    assert all(
+        req.get_header("Accept") == "application/json, text/event-stream"
+        for req, _ in captured
+    )
+    assert captured[0][0].get_header("Mcp-session-id") is None
+    assert captured[1][0].get_header("Mcp-session-id") == "test-session"
+    assert captured[2][0].get_header("Mcp-session-id") == "test-session"
+    assert json.loads(captured[0][0].data.decode("utf-8"))["method"] == "initialize"
+    assert json.loads(captured[1][0].data.decode("utf-8"))["method"] == "notifications/initialized"
+    assert json.loads(captured[2][0].data.decode("utf-8")) == {
         "jsonrpc": "2.0",
         "id": 1,
         "method": "tools/call",
@@ -171,7 +245,7 @@ def test_call_tool_posts_json_rpc_payload(monkeypatch):
             "arguments": {"user_id": "user-001"},
         },
     }
-    assert response == {"result": {"ok": True}}
+    assert response == {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
 
 
 def test_main_falls_back_to_sse_when_mcp_returns_404(monkeypatch, capsys):
@@ -184,6 +258,7 @@ def test_main_falls_back_to_sse_when_mcp_returns_404(monkeypatch, capsys):
         def __init__(self, body=b"{}", status=202):
             self._body = body
             self.status = status
+            self.headers = {}
 
         def __enter__(self):
             return self
