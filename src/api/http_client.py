@@ -45,8 +45,29 @@ def _load_env():
 def get_data_dir() -> Path:
     """获取数据目录，支持环境变量配置"""
     default_dir = Path.home() / ".claude" / "xianyu-tokens"
-    data_dir = os.environ.get("XIANYU_DATA_DIR", str(default_dir))
+    data_dir = os.environ.get("XIANYU_DATA_DIR")
+    if not data_dir:
+        data_root = os.environ.get("XIANYU_DATA_ROOT")
+        if data_root:
+            user_id = os.environ.get("XIANYU_USER_ID", "default")
+            data_dir = str(Path(data_root) / user_id / "tokens")
+        else:
+            data_dir = str(default_dir)
     return Path(data_dir)
+
+
+def _parse_full_cookie(full_cookie: str) -> Dict[str, str]:
+    cookies: Dict[str, str] = {}
+    for part in full_cookie.split(";"):
+        token = part.strip()
+        if not token or "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        cookies[key] = value.strip()
+    return cookies
 
 
 def load_local_auth() -> Dict[str, str]:
@@ -57,7 +78,8 @@ def load_local_auth() -> Dict[str, str]:
 
 def load_local_auth_data() -> Dict[str, Any]:
     """从本地加载完整鉴权数据"""
-    auth_file = get_data_dir() / "auth.json"
+    data_dir = get_data_dir()
+    auth_file = data_dir / "auth.json"
     if auth_file.exists():
         try:
             data = json.loads(auth_file.read_text(encoding="utf-8"))
@@ -65,6 +87,24 @@ def load_local_auth_data() -> Dict[str, Any]:
                 return data
         except json.JSONDecodeError:
             logger.warning(f"本地鉴权文件损坏")
+
+    legacy_file = data_dir / "token.json"
+    if legacy_file.exists():
+        try:
+            data = json.loads(legacy_file.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                if isinstance(data.get("cookies"), dict):
+                    return data
+                full_cookie = data.get("full_cookie")
+                if isinstance(full_cookie, str) and full_cookie.strip():
+                    return {
+                        "cookies": _parse_full_cookie(full_cookie),
+                        "updated_at": data.get("updated_at"),
+                        "expires_at": data.get("expires_at"),
+                        "device_id": data.get("device_id"),
+                    }
+        except json.JSONDecodeError:
+            logger.warning("本地 legacy token 文件损坏")
     return {}
 
 

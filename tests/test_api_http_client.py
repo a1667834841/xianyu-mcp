@@ -3,10 +3,48 @@ import hashlib
 import json
 import asyncio
 from unittest.mock import AsyncMock, patch
-from src.api.http_client import HttpClient, save_local_auth
+from src.api.http_client import HttpClient, save_local_auth, load_local_auth_data
 
 
 class TestHttpClientSign:
+    def test_load_local_auth_data_uses_env_root_user_tokens_dir(self, tmp_path, monkeypatch):
+        user_root = tmp_path / "users" / "default" / "tokens"
+        user_root.mkdir(parents=True)
+        (user_root / "auth.json").write_text(
+            json.dumps({"cookies": {"unb": "4188939592", "cookie2": "abc"}}),
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("XIANYU_DATA_DIR", raising=False)
+        monkeypatch.setenv("XIANYU_DATA_ROOT", str(tmp_path / "users"))
+        monkeypatch.setenv("XIANYU_USER_ID", "default")
+
+        data = load_local_auth_data()
+
+        assert data["cookies"] == {"unb": "4188939592", "cookie2": "abc"}
+
+    def test_load_local_auth_data_falls_back_to_legacy_token_file(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "users" / "default" / "tokens"
+        data_dir.mkdir(parents=True)
+        (data_dir / "token.json").write_text(
+            json.dumps(
+                {
+                    "full_cookie": "unb=4188939592; _m_h5_tk=test_token_123; cookie2=abc",
+                    "updated_at": "2026-05-05T00:00:00",
+                    "expires_at": "2026-05-06T00:00:00",
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("XIANYU_DATA_DIR", raising=False)
+        monkeypatch.setenv("XIANYU_DATA_ROOT", str(tmp_path / "users"))
+        monkeypatch.setenv("XIANYU_USER_ID", "default")
+
+        data = load_local_auth_data()
+
+        assert data["cookies"]["unb"] == "4188939592"
+        assert data["cookies"]["_m_h5_tk"] == "test_token_123"
+        assert data["cookies"]["cookie2"] == "abc"
+
     def test_init_loads_device_id_from_auth_file(self, tmp_path, monkeypatch):
         data_dir = tmp_path / "tokens"
         data_dir.mkdir()
