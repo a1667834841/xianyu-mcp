@@ -100,3 +100,27 @@ class TestXianyuSourceAdapter:
 
         assert item.images == ["https://img.example/1.jpg", "https://img.example/2.jpg"]
         assert item.price == 188.5
+
+    @pytest.mark.asyncio
+    async def test_parse_item_accepts_real_itemdo_detail_shape(self):
+        detail = {
+            "itemDO": {
+                "itemId": 886153110498,
+                "title": "真实商品标题",
+                "desc": "真实商品描述",
+                "soldPrice": "5.40",
+                "imageInfos": [
+                    {"url": "http://img.example/1.jpg"},
+                    {"url": "http://img.example/2.jpg"},
+                ],
+            }
+        }
+        adapter = XianyuSourceAdapter(detail_client=DummyDetailClient(detail))
+
+        item = await adapter.parse_item("https://www.goofish.com/item?id=886153110498")
+
+        assert item.source_item_id == "886153110498"
+        assert item.title == "真实商品标题"
+        assert item.description == "真实商品描述"
+        assert item.images == ["http://img.example/1.jpg", "http://img.example/2.jpg"]
+        assert item.price == 5.4

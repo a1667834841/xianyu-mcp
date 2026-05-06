@@ -225,6 +225,13 @@ async def xianyu_get_detail(user_id: str | None = None, item_url: str = "") -> s
 
 
 @mcp.tool()
+async def xianyu_publish_from_item_url(user_id: str | None = None, item_url: str = "") -> str:
+    client = get_client()
+    result = await client.publish_from_item_url(item_url=item_url)
+    return json.dumps(result, ensure_ascii=False)
+
+
+@mcp.tool()
 async def xianyu_create_conversation(user_id: str | None = None, item_url: str = "") -> str:
     client = get_client()
     if "item?id=" in item_url:

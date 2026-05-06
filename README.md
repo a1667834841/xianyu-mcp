@@ -19,6 +19,7 @@
 | `xianyu_search` | 搜索商品 |
 | `xianyu_get_detail` | 获取商品详情 |
 | `xianyu_publish` | 发布商品 |
+| `xianyu_publish_from_item_url` | 按商品链接铺货 |
 | `xianyu_create_conversation` | 创建对话 |
 | `xianyu_list_conversations` | 获取对话列表 |
 | `xianyu_get_messages` | 获取消息历史 |

@@ -63,10 +63,10 @@ MCP_DEV_URL=http://127.0.0.1:18090/mcp ./scripts/mcp-dev call xianyu_list_users
 ./scripts/mcp-dev call xianyu_search --user-id user-001 --keyword 机械键盘 --rows 5
 ```
 
-指定用户发布：
+指定用户按商品链接铺货：
 
 ```bash
-./scripts/mcp-dev call xianyu_publish --user-id user-001 --item-url "https://www.goofish.com/item?id=123"
+./scripts/mcp-dev call xianyu_publish_from_item_url --user-id user-001 --item-url "https://www.goofish.com/item?id=123"
 ```
 
 ## E2E 栈

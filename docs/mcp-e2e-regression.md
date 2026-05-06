@@ -166,6 +166,17 @@ curl -X POST http://localhost:8080/rest/login_poll \
 - 返回完整的商品详情 JSON
 - 包含 `itemDO`, `sellerDO` 等字段
 
+### 7.1 xianyu_publish_from_item_url (按商品链接铺货)
+```bash
+./scripts/mcp-dev call xianyu_publish_from_item_url --item-url "https://www.goofish.com/item?id=1047155930582"
+```
+**验证点**:
+- 返回 `success: true/false`
+- 成功时包含 `source_platform`, `source_item_url`, `published_item_id`, `published_item_url`
+- 失败时包含 `failed_step`, `message`, `logs`
+- `logs` 至少覆盖 `select_source_adapter`, `parse_item`, `publish_item`
+- **注意**: 此命令会走真实铺货链路，请谨慎使用。
+
 ### 8. xianyu_ws_send (发送消息)
 ```bash
 ./scripts/mcp-dev call xianyu_ws_send --target-id 60971615689 --conversation-id 60971615689 --content 你好
@@ -240,6 +251,7 @@ curl -X POST http://localhost:8080/rest/login_poll \
 | `xianyu_suggest_keywords` | 成功 | 返回联想词数组 |
 | `xianyu_publish` | 成功 | 真实发布成功，见下文 |
 | `xianyu_get_detail` | 成功 | 返回真实商品详情 |
+| `xianyu_publish_from_item_url` | 未回归 | 新增按链接铺货工具，待补真实链路验证 |
 | `xianyu_ws_send` | 成功 | 真实发送成功，见下文 |
 | `xianyu_ws_status` | 成功 | `connected: true` |
 | `xianyu_get_access_token` | 成功 | 返回脱敏的 `access_token` |
@@ -278,6 +290,45 @@ python3 scripts/mcp-dev call xianyu_publish --images-paths "/opt/dockercompose/x
   "method": "http"
 }
 ```
+
+### 默认 `8080` 实例的按商品链接铺货
+
+```bash
+python3 scripts/mcp-dev call xianyu_publish_from_item_url --item-url "https://www.goofish.com/item?id=1047155930582"
+```
+
+预期返回结构：
+
+```json
+{
+  "success": true,
+  "source_platform": "xianyu",
+  "source_item_url": "https://www.goofish.com/item?id=1047155930582",
+  "published_item_id": "<new-item-id>",
+  "published_item_url": "https://www.goofish.com/item?id=<new-item-id>",
+  "selected_price": 88.0,
+  "logs": [
+    {
+      "step": "select_source_adapter",
+      "status": "success"
+    },
+    {
+      "step": "parse_item",
+      "status": "success"
+    },
+    {
+      "step": "publish_item",
+      "status": "success"
+    }
+  ]
+}
+```
+
+说明：
+
+- 当前首版仅支持闲鱼商品链接。
+- 若任一步失败，会返回 `failed_step` 和完整 `logs`，用于排查。
+- 若源商品存在规格价格，系统会取最低规格价作为发布价。
 
 ### 默认 `8080` 实例的 accessToken 与 WebSocket 修复验证
 
@@ -373,3 +424,15 @@ MCP_DEV_URL="http://127.0.0.1:18090/mcp" python3 scripts/mcp-dev call xianyu_pub
   "method": "http"
 }
 ```
+
+### 按商品链接铺货
+
+```bash
+MCP_DEV_URL="http://127.0.0.1:18090/mcp" python3 scripts/mcp-dev call xianyu_publish_from_item_url --item-url "https://www.goofish.com/item?id=1047155930582"
+```
+
+预期行为：
+
+- 返回结构与默认 `8080` 实例一致
+- 成功时返回新发布商品 ID 和 URL
+- 失败时返回 `failed_step` 与步骤日志

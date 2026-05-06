@@ -224,6 +224,43 @@ async def test_http_xianyu_publish_maps_public_params_to_core_options(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_http_xianyu_publish_from_item_url_delegates_to_client(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    class FakeClient:
+        async def publish_from_item_url(self, item_url: str):
+            assert item_url == "https://www.goofish.com/item?id=1047155930582"
+            return {
+                "success": True,
+                "source_platform": "xianyu",
+                "source_item_url": item_url,
+                "published_item_id": "item-001",
+                "published_item_url": "https://www.goofish.com/item?id=item-001",
+                "selected_price": 88.0,
+                "logs": [],
+            }
+
+    monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
+
+    payload = json.loads(
+        await http_server.xianyu_publish_from_item_url(
+            item_url="https://www.goofish.com/item?id=1047155930582"
+        )
+    )
+
+    assert payload == {
+        "success": True,
+        "source_platform": "xianyu",
+        "source_item_url": "https://www.goofish.com/item?id=1047155930582",
+        "published_item_id": "item-001",
+        "published_item_url": "https://www.goofish.com/item?id=item-001",
+        "selected_price": 88.0,
+        "logs": [],
+    }
+
+
+@pytest.mark.asyncio
 async def test_http_create_conversation_success(monkeypatch):
     _install_fake_mcp(monkeypatch)
     import mcp_server.http_server as http_server
