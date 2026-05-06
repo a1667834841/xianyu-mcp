@@ -422,6 +422,7 @@ class HttpClient:
         if resp.get("ret") and "FAIL_SYS_SESSION_EXPIRED" in resp["ret"][0]:
             raise Exception("SESSION_EXPIRED: Session 过期")
         
+        collect_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         result_list = resp.get("data", {}).get("resultList", [])
         items = []
         
@@ -436,12 +437,24 @@ class HttpClient:
                 
                 price = click_param.get("price") or click_param.get("displayPrice")
                 if not price and ex_content.get("price"):
-                    price = ex_content["price"][0].get("text", "")
+                    price_parts = ex_content["price"]
+                    if isinstance(price_parts, list) and price_parts:
+                        price = "".join(
+                            p.get("text", "") for p in price_parts if isinstance(p, dict)
+                        )
+                
+                want_cnt = _extract_want_cnt(ex_content)
+                publish_time = _format_publish_time(click_param.get("publishTime"))
                 
                 items.append({
                     "item_id": item_id,
                     "title": ex_content.get("title", ""),
                     "price": price or "",
+                    "want_cnt": want_cnt,
+                    "publish_time": publish_time,
+                    "collect_time": collect_time,
+                    "seller_nick": ex_content.get("userNickName", ""),
+                    "seller_city": ex_content.get("area", ""),
                     "detail_url": f"https://www.goofish.com/item?id={item_id}",
                 })
             except (KeyError, IndexError):
@@ -1098,3 +1111,34 @@ class HttpClient:
     def close(self):
         """关闭会话"""
         self.session.close()
+
+
+def _extract_want_cnt(ex_content: Dict[str, Any]) -> int:
+    """从 fishTags.r3 提取想要人数"""
+    import re as _re
+    try:
+        fish_tags = ex_content.get("fishTags", {})
+        r3_tags = fish_tags.get("r3", {}).get("tagList", [])
+        if not isinstance(r3_tags, list):
+            return 0
+        for tag in r3_tags:
+            if not isinstance(tag, dict):
+                continue
+            content = tag.get("data", {}).get("content", "")
+            if "人想要" in content:
+                match = _re.search(r"(\d+)人想要", content)
+                if match:
+                    return int(match.group(1))
+    except (AttributeError, TypeError):
+        pass
+    return 0
+
+
+def _format_publish_time(publish_time_ms: Any) -> Optional[str]:
+    """格式化发布时间（毫秒转字符串）"""
+    from datetime import datetime as _datetime
+    try:
+        publish_dt = _datetime.fromtimestamp(int(publish_time_ms) / 1000)
+        return publish_dt.strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None

@@ -167,6 +167,60 @@ class TestHttpClientSearch:
             assert result[0]["title"] == "测试商品"
 
     @pytest.mark.asyncio
+    async def test_search_returns_enhanced_metadata_fields(self):
+        client = HttpClient(cookies={}, device_id="test_device")
+
+        mock_response = {
+            "ret": ["SUCCESS::调用成功"],
+            "data": {
+                "resultList": [
+                    {
+                        "data": {
+                            "item": {
+                                "main": {
+                                    "exContent": {
+                                        "itemId": "123",
+                                        "title": "测试商品",
+                                        "price": [{"text": "5"}, {"text": ".40"}],
+                                        "userNickName": "卖家A",
+                                        "area": "江苏",
+                                        "fishTags": {
+                                            "r3": {
+                                                "tagList": [
+                                                    {"data": {"content": "1053人想要"}}
+                                                ]
+                                            }
+                                        },
+                                    },
+                                    "clickParam": {
+                                        "args": {
+                                            "item_id": "123",
+                                            "publishTime": 1739258714000,
+                                        }
+                                    },
+                                }
+                            }
+                        }
+                    }
+                ]
+            },
+        }
+
+        with patch.object(client, "_send_request", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = mock_response
+
+            result = await client.search(keyword="iPhone", rows=30)
+
+        assert len(result) == 1
+        assert result[0]["price"] == "5.40"
+        assert result[0]["want_cnt"] == 1053
+        assert result[0]["publish_time"] == "2025-02-11 15:25:14"
+        assert result[0]["seller_nick"] == "卖家A"
+        assert result[0]["seller_city"] == "江苏"
+        assert result[0]["collect_time"]
+        assert result[0]["detail_url"] == "https://www.goofish.com/item?id=123"
+
+    @pytest.mark.asyncio
     async def test_search_session_expired(self):
         client = HttpClient(cookies={}, device_id="test_device")
         
