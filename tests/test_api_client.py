@@ -768,3 +768,43 @@ async def test_websocket_init_success_log_does_not_include_access_token(caplog):
     assert "获取 accessToken 成功" in caplog.text
     assert "oauth_k1:abcdefghijklmnopqrstuvwxyz" not in caplog.text
     assert "oauth_k1:abcdefghijk" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_sourcing_service_returns_select_source_adapter_failure_for_unknown_platform():
+    from src.sourcing_service import SourcingService
+    from unittest.mock import AsyncMock
+
+    publish_client = AsyncMock()
+    service = SourcingService(publish_client=publish_client, adapters=[])
+
+    result = await service.publish_from_item_url("https://example.com/item/1")
+
+    assert result["success"] is False
+    assert result["failed_step"] == "select_source_adapter"
+    assert result["logs"][0]["step"] == "select_source_adapter"
+    assert result["logs"][0]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_sourcing_service_stops_before_publish_when_parse_fails():
+    from src.sourcing_service import SourcingService
+    from unittest.mock import AsyncMock
+
+    class FailingAdapter:
+        platform_name = "xianyu"
+
+        def supports(self, item_url: str) -> bool:
+            return True
+
+        async def parse_item(self, item_url: str):
+            raise ValueError("商品价格缺失")
+
+    publish_client = AsyncMock()
+    service = SourcingService(publish_client=publish_client, adapters=[FailingAdapter()])
+
+    result = await service.publish_from_item_url("https://www.goofish.com/item?id=1047155930582")
+
+    publish_client.publish.assert_not_awaited()
+    assert result["failed_step"] == "parse_item"
+    assert result["logs"][-1]["status"] == "failed"

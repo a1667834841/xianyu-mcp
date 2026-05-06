@@ -84,3 +84,19 @@ class TestXianyuSourceAdapter:
 
         with pytest.raises(ValueError, match="商品图片缺失"):
             await adapter.parse_item("https://www.goofish.com/item?id=1047155930582")
+
+    @pytest.mark.asyncio
+    async def test_parse_item_accepts_detail_url_images_field(self):
+        detail = {
+            "item_id": "1047155930582",
+            "title": "测试商品",
+            "description": "测试描述",
+            "image_urls": ["https://img.example/1.jpg", "https://img.example/2.jpg"],
+            "price": "188.5",
+        }
+        adapter = XianyuSourceAdapter(detail_client=DummyDetailClient(detail))
+
+        item = await adapter.parse_item("https://www.goofish.com/item?id=1047155930582")
+
+        assert item.images == ["https://img.example/1.jpg", "https://img.example/2.jpg"]
+        assert item.price == 188.5

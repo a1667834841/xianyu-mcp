@@ -14,12 +14,14 @@ class SourcingService:
     async def publish_from_item_url(self, item_url: str) -> dict[str, Any]:
         logs: list[dict[str, Any]] = []
         source_platform = "unknown"
+        current_step = "select_source_adapter"
 
         try:
             adapter = self._select_source_adapter(item_url)
             source_platform = adapter.platform_name
             logs.append(self._log_entry("select_source_adapter", "success", "已选择闲鱼适配器", {"platform": source_platform}))
 
+            current_step = "parse_item"
             item = await adapter.parse_item(item_url)
             logs.append(
                 self._log_entry(
@@ -36,6 +38,7 @@ class SourcingService:
                 )
             )
 
+            current_step = "publish_item"
             publish_result = await self.publish_client.publish(
                 images_paths=item.images,
                 title=item.title,
@@ -68,20 +71,12 @@ class SourcingService:
                 "logs": logs,
             }
         except Exception as exc:
-            failed_step = self._failed_step_from_logs(logs)
-            logs.append(
-                self._log_entry(
-                    failed_step,
-                    "failed",
-                    str(exc),
-                    {"reason": str(exc)},
-                )
-            )
+            logs.append(self._log_entry(current_step, "failed", str(exc), {"reason": str(exc)}))
             return {
                 "success": False,
                 "source_platform": source_platform,
                 "source_item_url": item_url,
-                "failed_step": failed_step,
+                "failed_step": current_step,
                 "message": str(exc),
                 "logs": logs,
             }
@@ -91,16 +86,6 @@ class SourcingService:
             if adapter.supports(item_url):
                 return adapter
         raise ValueError("不支持的来源平台")
-
-    def _failed_step_from_logs(self, logs: list[dict[str, Any]]) -> str:
-        if not logs:
-            return "select_source_adapter"
-        last_step = logs[-1]["step"]
-        if last_step == "select_source_adapter":
-            return "parse_item"
-        if last_step == "parse_item":
-            return "publish_item"
-        return last_step
 
     def _log_entry(self, step: str, status: str, message: str, details: dict[str, Any]) -> dict[str, Any]:
         entry = {

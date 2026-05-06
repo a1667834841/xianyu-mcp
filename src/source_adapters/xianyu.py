@@ -18,9 +18,10 @@ class XianyuSourceAdapter:
         item_id = self._extract_item_id(item_url, detail)
         title = str(detail.get("title") or "").strip()
         description = str(detail.get("description") or "")
-        images = list(detail.get("images") or [])
-        sku_prices = [float(price) for price in (detail.get("sku_prices") or [])]
-        main_price = detail.get("price")
+        images = list(detail.get("images") or detail.get("image_urls") or [])
+        sku_prices = [self._coerce_price(price) for price in (detail.get("sku_prices") or [])]
+        sku_prices = [price for price in sku_prices if price is not None]
+        main_price = self._coerce_price(detail.get("price"))
 
         if not title:
             raise ValueError("商品标题缺失")
@@ -28,7 +29,7 @@ class XianyuSourceAdapter:
             raise ValueError("商品图片缺失")
 
         selected_price = min(sku_prices) if sku_prices else main_price
-        if selected_price in (None, ""):
+        if selected_price is None:
             raise ValueError("商品价格缺失")
 
         return NormalizedSourceItem(
@@ -38,7 +39,7 @@ class XianyuSourceAdapter:
             title=title,
             description=description,
             images=images,
-            price=float(selected_price),
+            price=selected_price,
             sku_prices=sku_prices,
             raw_detail=dict(detail),
         )
@@ -49,3 +50,9 @@ class XianyuSourceAdapter:
         if not item_id:
             raise ValueError("无法从商品链接提取 item_id")
         return item_id
+
+    @staticmethod
+    def _coerce_price(value):
+        if value in (None, ""):
+            return None
+        return float(value)
