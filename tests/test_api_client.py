@@ -586,6 +586,82 @@ class TestXianyuApiClient:
         assert client.ws_client is new_ws_client
         assert client.ws_status == "disconnected"
 
+    @pytest.mark.asyncio
+    async def test_publish_from_item_url_returns_success_with_logs(self):
+        client = XianyuApiClient()
+
+        normalized_item = MagicMock()
+        normalized_item.source_platform = "xianyu"
+        normalized_item.source_item_url = "https://www.goofish.com/item?id=1047155930582"
+        normalized_item.source_item_id = "1047155930582"
+        normalized_item.title = "测试商品"
+        normalized_item.description = "测试描述"
+        normalized_item.images = ["https://img.example/1.jpg"]
+        normalized_item.price = 129.0
+        normalized_item.sku_prices = [129.0, 149.0]
+
+        with patch("src.api.client.SourcingService") as mock_service_cls:
+            mock_service = mock_service_cls.return_value
+            mock_service.publish_from_item_url = AsyncMock(
+                return_value={
+                    "success": True,
+                    "source_platform": "xianyu",
+                    "source_item_url": normalized_item.source_item_url,
+                    "published_item_id": "new-item-1",
+                    "published_item_url": "https://www.goofish.com/item?id=new-item-1",
+                    "selected_price": 129.0,
+                    "logs": [
+                        {"step": "select_source_adapter", "status": "success", "message": "已选择闲鱼适配器", "details": {"platform": "xianyu"}},
+                        {"step": "parse_item", "status": "success", "message": "商品解析成功", "details": {"selected_price": 129.0}},
+                        {"step": "publish_item", "status": "success", "message": "发布成功", "details": {"item_id": "new-item-1"}},
+                    ],
+                }
+            )
+
+            result = await client.publish_from_item_url("https://www.goofish.com/item?id=1047155930582")
+
+        assert result["success"] is True
+        assert result["selected_price"] == 129.0
+        assert [log["step"] for log in result["logs"]] == [
+            "select_source_adapter",
+            "parse_item",
+            "publish_item",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_publish_from_item_url_stops_when_parse_fails(self):
+        client = XianyuApiClient()
+
+        with patch("src.api.client.SourcingService") as mock_service_cls:
+            mock_service = mock_service_cls.return_value
+            mock_service.publish_from_item_url = AsyncMock(
+                return_value={
+                    "success": False,
+                    "source_platform": "xianyu",
+                    "source_item_url": "https://www.goofish.com/item?id=1047155930582",
+                    "failed_step": "parse_item",
+                    "message": "商品价格缺失",
+                    "logs": [
+                        {"step": "select_source_adapter", "status": "success", "message": "已选择闲鱼适配器", "details": {"platform": "xianyu"}},
+                        {"step": "parse_item", "status": "failed", "message": "商品价格缺失", "details": {"reason": "商品价格缺失"}},
+                    ],
+                }
+            )
+
+            result = await client.publish_from_item_url("https://www.goofish.com/item?id=1047155930582")
+
+        assert result == {
+            "success": False,
+            "source_platform": "xianyu",
+            "source_item_url": "https://www.goofish.com/item?id=1047155930582",
+            "failed_step": "parse_item",
+            "message": "商品价格缺失",
+            "logs": [
+                {"step": "select_source_adapter", "status": "success", "message": "已选择闲鱼适配器", "details": {"platform": "xianyu"}},
+                {"step": "parse_item", "status": "failed", "message": "商品价格缺失", "details": {"reason": "商品价格缺失"}},
+            ],
+        }
+
 
 @pytest.mark.asyncio
 async def test_ensure_ws_started_creates_background_task(monkeypatch):

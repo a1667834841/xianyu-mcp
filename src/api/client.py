@@ -10,6 +10,7 @@ from .websocket_pool import WebSocketPool
 from .types import Conversation
 from src.browser_bridge import BrowserBridge
 from src.settings import load_settings
+from src.sourcing_service import SourcingService
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +167,12 @@ class XianyuApiClient:
 
         result["method"] = "http"
         return result
-    
+
+    async def publish_from_item_url(self, item_url: str) -> Dict[str, Any]:
+        """输入商品链接后自动解析并发布。"""
+        service = SourcingService(publish_client=self)
+        return await service.publish_from_item_url(item_url)
+
     async def create_conversation(self, item_url: str, seller_id: str = "") -> Dict[str, Any]:
         """创建对话"""
         if not self.http_client:
