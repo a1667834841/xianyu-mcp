@@ -29,8 +29,7 @@ def calculate_exposure_score(want_cnt: int, publish_time_str: Optional[str]) -> 
         now = datetime.now()
         if publish_dt > now:
             return 0.0
-        hours_diff = (now - publish_dt).total_seconds() / 3600
-        days_diff = max(0, hours_diff / 24)
+        days_diff = max(0, (now - publish_dt).total_seconds() / 86400)
         exposure_score = (want_cnt * 100) / (days_diff + 1)
         return round(exposure_score, 2)
     except (ValueError, TypeError):

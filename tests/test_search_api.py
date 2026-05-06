@@ -112,6 +112,16 @@ def test_calculate_exposure_score_normal():
         assert result == 5000.0
 
 
+def test_calculate_exposure_score_half_day_old():
+    """发布 12 小时按 0.5 天衰减"""
+    with patch("src.search_api.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 4, 10, 12, 0, 0)
+        mock_dt.strptime = datetime.strptime
+
+        result = calculate_exposure_score(100, "2026-04-10 00:00:00")
+        assert result == 6666.67
+
+
 def test_calculate_exposure_score_zero_want():
     """想要人数为 0"""
     result = calculate_exposure_score(0, "2026-04-09 00:00:00")
