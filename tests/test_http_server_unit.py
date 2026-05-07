@@ -461,31 +461,6 @@ async def test_initialize_manager_starts_ws_when_cookie_valid(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_initialize_manager_starts_keepalive_when_cookie_valid(monkeypatch):
-    _install_fake_mcp(monkeypatch)
-    import mcp_server.http_server as http_server
-
-    calls = []
-
-    class FakeClient:
-        async def check_session(self):
-            return {"valid": True}
-
-        async def ensure_ws_started(self, reason):
-            return {"success": True, "status": "starting", "reason": reason}
-
-        async def start_keepalive(self):
-            calls.append("start_keepalive")
-            return True
-
-    monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
-
-    await http_server.initialize_manager()
-
-    assert calls == ["start_keepalive"]
-
-
-@pytest.mark.asyncio
 async def test_initialize_manager_skips_ws_when_cookie_invalid(monkeypatch):
     _install_fake_mcp(monkeypatch)
     import mcp_server.http_server as http_server
@@ -555,27 +530,6 @@ async def test_shutdown_manager_stops_ws_listener(monkeypatch):
     await http_server.shutdown_manager()
 
     assert calls == ["stop"]
-
-
-@pytest.mark.asyncio
-async def test_shutdown_manager_stops_keepalive(monkeypatch):
-    _install_fake_mcp(monkeypatch)
-    import mcp_server.http_server as http_server
-
-    calls = []
-
-    class FakeClient:
-        async def stop_ws_listener(self):
-            return {"success": True}
-
-        async def stop_keepalive(self):
-            calls.append("stop_keepalive")
-
-    monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
-
-    await http_server.shutdown_manager()
-
-    assert calls == ["stop_keepalive"]
 
 
 @pytest.mark.asyncio

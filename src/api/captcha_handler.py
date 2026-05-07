@@ -35,12 +35,12 @@ class CaptchaHandler:
         
         try:
             # 1. 连接浏览器容器
-            page = await bridge.connect_to_browser_pool()
+            page = await bridge.connect()
             if not page:
                 logger.error("[Captcha] 无法连接浏览器容器")
                 return False
 
-            await bridge.apply_cookies_to_context(self.http_client.cookies)
+            await bridge.add_cookies(self.http_client.cookies)
             
             logger.info("[Captcha] 已连接浏览器容器")
             
@@ -86,7 +86,7 @@ class CaptchaHandler:
             
         finally:
             # 6. 关闭验证页面
-            await bridge.close_captcha_page()
+            await bridge.close_page(page)
                 
             # 7. 断开连接（保留浏览器容器运行）
             await bridge.disconnect()

@@ -21,26 +21,7 @@ def test_token():
     return None
 
 
-@pytest.fixture
-async def browser():
-    """获取浏览器实例（异步）"""
-    from src.browser import AsyncChromeManager
 
-    manager = AsyncChromeManager()
-    await manager.ensure_running()
-    yield manager
-    await manager.close()
-
-
-@pytest.fixture
-async def xianyu_app():
-    """获取 XianyuApp 实例（重构后的统一入口）"""
-    from src.core import XianyuApp
-
-    app = XianyuApp()
-    await app.browser.ensure_running()
-    yield app
-    await app.browser.close()
 
 
 @pytest.fixture(scope="module")

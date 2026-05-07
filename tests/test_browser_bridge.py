@@ -1,10 +1,199 @@
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 from src.browser_bridge import BrowserBridge
 from src.api.captcha_handler import CaptchaHandler
 
 
 class TestBrowserBridge:
+    @pytest.mark.asyncio
+    async def test_connect_uses_cdp_and_reuses_existing_context_and_page(self, monkeypatch):
+        bridge = BrowserBridge()
+
+        existing_page = object()
+
+        class FakeContext:
+            def __init__(self):
+                self.pages = [existing_page]
+
+        fake_context = FakeContext()
+
+        class FakeBrowser:
+            def __init__(self):
+                self.contexts = [fake_context]
+
+        fake_browser = FakeBrowser()
+
+        fake_playwright = type("FakePlaywright", (), {})()
+        fake_playwright.chromium = type("FakeChromium", (), {})()
+        fake_playwright.chromium.connect_over_cdp = AsyncMock(return_value=fake_browser)
+
+        fake_launcher = AsyncMock(return_value=fake_playwright)
+
+        monkeypatch.setattr(bridge, "_get_websocket_url", AsyncMock(return_value="ws://cdp-endpoint"))
+        monkeypatch.setattr("playwright.async_api.async_playwright", lambda: type("FakeManager", (), {"start": fake_launcher})())
+
+        page = await bridge.connect()
+
+        assert page is existing_page
+        assert bridge._browser is fake_browser
+        assert bridge.get_context() is fake_context
+        fake_playwright.chromium.connect_over_cdp.assert_awaited_once_with("ws://cdp-endpoint")
+
+    @pytest.mark.asyncio
+    async def test_connect_cleans_up_state_when_cdp_connection_fails(self, monkeypatch):
+        bridge = BrowserBridge()
+
+        fake_playwright = type("FakePlaywright", (), {"stop": AsyncMock()})()
+        fake_playwright.chromium = type("FakeChromium", (), {})()
+        fake_playwright.chromium.connect_over_cdp = AsyncMock(side_effect=RuntimeError("cdp failed"))
+
+        fake_launcher = AsyncMock(return_value=fake_playwright)
+
+        monkeypatch.setattr(bridge, "_get_websocket_url", AsyncMock(return_value="ws://cdp-endpoint"))
+        monkeypatch.setattr("playwright.async_api.async_playwright", lambda: type("FakeManager", (), {"start": fake_launcher})())
+
+        bridge._browser = object()
+        bridge._context = object()
+        bridge._page = object()
+
+        page = await bridge.connect()
+
+        assert page is None
+        fake_playwright.stop.assert_awaited_once_with()
+        assert bridge._playwright is None
+        assert bridge._browser is None
+        assert bridge._context is None
+        assert bridge._page is None
+
+    @pytest.mark.asyncio
+    async def test_connect_cleans_up_state_when_websocket_url_is_missing(self, monkeypatch):
+        bridge = BrowserBridge()
+
+        fake_playwright = type("FakePlaywright", (), {"stop": AsyncMock()})()
+        fake_playwright.chromium = type("FakeChromium", (), {})()
+        fake_playwright.chromium.connect_over_cdp = AsyncMock()
+
+        fake_launcher = AsyncMock(return_value=fake_playwright)
+
+        monkeypatch.setattr(bridge, "_get_websocket_url", AsyncMock(return_value=None))
+        monkeypatch.setattr("playwright.async_api.async_playwright", lambda: type("FakeManager", (), {"start": fake_launcher})())
+
+        page = await bridge.connect()
+
+        assert page is None
+        fake_playwright.stop.assert_awaited_once_with()
+        fake_playwright.chromium.connect_over_cdp.assert_not_awaited()
+        assert bridge._playwright is None
+        assert bridge._browser is None
+        assert bridge._context is None
+        assert bridge._page is None
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_page_creates_page_when_context_has_none(self):
+        bridge = BrowserBridge()
+
+        created_page = object()
+
+        class FakeContext:
+            def __init__(self):
+                self.pages = []
+
+            async def new_page(self):
+                self.pages.append(created_page)
+                return created_page
+
+        bridge._context = FakeContext()
+
+        page = await bridge.get_or_create_page()
+
+        assert page is created_page
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_page_reuses_context_page_when_cached_page_is_unavailable(self):
+        bridge = BrowserBridge()
+
+        available_page = object()
+
+        class FakeCachedPage:
+            @property
+            def url(self):
+                raise RuntimeError("page closed")
+
+        class FakeContext:
+            def __init__(self):
+                self.pages = [available_page]
+
+            async def new_page(self):
+                raise AssertionError("should not create new page")
+
+        bridge._page = FakeCachedPage()
+        bridge._context = FakeContext()
+
+        page = await bridge.get_or_create_page()
+
+        assert page is available_page
+        assert bridge._page is available_page
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_page_creates_new_page_when_cached_page_is_unavailable_and_context_has_none(self):
+        bridge = BrowserBridge()
+
+        created_page = object()
+
+        class FakeCachedPage:
+            @property
+            def url(self):
+                raise RuntimeError("page closed")
+
+        class FakeContext:
+            def __init__(self):
+                self.pages = []
+
+            async def new_page(self):
+                self.pages.append(created_page)
+                return created_page
+
+        bridge._page = FakeCachedPage()
+        bridge._context = FakeContext()
+
+        page = await bridge.get_or_create_page()
+
+        assert page is created_page
+        assert bridge._page is created_page
+
+    @pytest.mark.asyncio
+    async def test_new_page_creates_fresh_page(self):
+        bridge = BrowserBridge()
+
+        created_page = object()
+
+        class FakeContext:
+            async def new_page(self):
+                return created_page
+
+        bridge._context = FakeContext()
+
+        page = await bridge.new_page()
+
+        assert page is created_page
+
+    @pytest.mark.asyncio
+    async def test_get_cookies_returns_cookie_mapping(self):
+        bridge = BrowserBridge()
+
+        class FakeContext:
+            async def cookies(self):
+                return [
+                    {"name": "cookie2", "value": "abc"},
+                    {"name": "_m_h5_tk", "value": "token_value"},
+                ]
+
+        bridge._context = FakeContext()
+
+        cookies = await bridge.get_cookies()
+
+        assert cookies == {"cookie2": "abc", "_m_h5_tk": "token_value"}
+
     @pytest.mark.asyncio
     async def test_get_captcha_cookies_falls_back_to_all_cookies_when_no_x5_present(self):
         bridge = BrowserBridge()
@@ -28,7 +217,7 @@ class TestBrowserBridge:
         }
 
     @pytest.mark.asyncio
-    async def test_apply_cookies_to_context_injects_http_client_cookies(self):
+    async def test_add_cookies_injects_http_client_cookies(self):
         bridge = BrowserBridge()
 
         class FakeContext:
@@ -40,7 +229,7 @@ class TestBrowserBridge:
 
         bridge._context = FakeContext()
 
-        await bridge.apply_cookies_to_context(
+        await bridge.add_cookies(
             {
                 "cookie2": "abc",
                 "_m_h5_tk": "token_value_123",
@@ -53,6 +242,65 @@ class TestBrowserBridge:
             {"name": "_m_h5_tk", "value": "token_value_123", "domain": ".goofish.com", "path": "/"},
             {"name": "unb", "value": "4188939592", "domain": ".goofish.com", "path": "/"},
         ]
+
+    @pytest.mark.asyncio
+    async def test_close_page_navigates_to_blank_and_clears_cached_page(self):
+        bridge = BrowserBridge()
+
+        class FakePage:
+            def __init__(self):
+                self.url = "https://example.com/captcha"
+                self.goto = AsyncMock()
+
+        page = FakePage()
+        bridge._page = page
+
+        await bridge.close_page()
+
+        page.goto.assert_awaited_once_with("about:blank", timeout=5000)
+        assert bridge._page is None
+
+    @pytest.mark.asyncio
+    async def test_close_page_clears_cached_page_even_when_already_blank(self):
+        bridge = BrowserBridge()
+
+        class FakePage:
+            def __init__(self):
+                self.url = "about:blank"
+                self.goto = AsyncMock()
+
+        page = FakePage()
+        bridge._page = page
+
+        await bridge.close_page()
+
+        page.goto.assert_not_awaited()
+        assert bridge._page is None
+
+    def test_legacy_method_names_are_removed(self):
+        bridge = BrowserBridge()
+
+        assert not hasattr(bridge, "connect_to_browser_pool")
+        assert not hasattr(bridge, "apply_cookies_to_context")
+        assert not hasattr(bridge, "close_captcha_page")
+
+    @pytest.mark.asyncio
+    async def test_disconnect_stops_playwright_and_clears_cached_objects(self):
+        bridge = BrowserBridge()
+
+        fake_playwright = type("FakePlaywright", (), {"stop": AsyncMock()})()
+        bridge._playwright = fake_playwright
+        bridge._browser = object()
+        bridge._context = object()
+        bridge._page = object()
+
+        await bridge.disconnect()
+
+        fake_playwright.stop.assert_awaited_once_with()
+        assert bridge._playwright is None
+        assert bridge._browser is None
+        assert bridge._context is None
+        assert bridge._page is None
 
 
 class TestCaptchaHandler:
@@ -128,23 +376,29 @@ class TestCaptchaHandler:
 
         class FakeBridge:
             def __init__(self):
+                self.connected = False
                 self.applied = None
                 self.cookies_collected = False
+                self.closed = False
+                self.disconnected = False
 
-            async def connect_to_browser_pool(self):
+            async def connect(self):
+                self.connected = True
                 return fake_page
 
-            async def apply_cookies_to_context(self, cookies):
+            async def add_cookies(self, cookies):
                 self.applied = dict(cookies)
 
             async def get_captcha_cookies(self):
                 self.cookies_collected = True
                 return {"_m_h5_tk": "token_value_123", "cookie2": "abc"}
 
-            async def close_captcha_page(self):
+            async def close_page(self, page=None):
+                self.closed = True
                 return None
 
             async def disconnect(self):
+                self.disconnected = True
                 return None
 
         fake_bridge = FakeBridge()
@@ -162,7 +416,10 @@ class TestCaptchaHandler:
         result = await handler.handle("https://example.com/captcha")
 
         assert result is True
+        assert fake_bridge.connected is True
         assert fake_bridge.applied == {"cookie2": "abc"}
         assert fake_page.reload_calls == [("domcontentloaded", 15000)]
         assert fake_page.wait_calls == [1000]
         assert fake_bridge.cookies_collected is True
+        assert fake_bridge.closed is True
+        assert fake_bridge.disconnected is True

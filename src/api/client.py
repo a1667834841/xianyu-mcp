@@ -4,11 +4,9 @@ import time
 from typing import Dict, Any, Optional, List
 
 from .http_client import HttpClient
-from .http_keepalive import HttpKeepaliveService
 from .websocket_client import WebSocketClient
 from .websocket_pool import WebSocketPool
 from .types import Conversation
-from src.browser_bridge import BrowserBridge
 from src.settings import load_settings
 from src.sourcing_service import SourcingService
 
@@ -34,13 +32,6 @@ class XianyuApiClient:
         self.http_client = HttpClient(cookies=None, device_id="")
         self.ws_client = WebSocketClient(self.http_client)
         self.websocket_pool = WebSocketPool()
-        self.browser_bridge = BrowserBridge()
-        self.keepalive_service = HttpKeepaliveService(
-            http_client=self.http_client,
-            browser_bridge=self.browser_bridge,
-            interval_minutes=240,
-            max_captcha_retries=3,
-        )
         
         self.ws_status = "disconnected"
         self.ws_last_error = None
@@ -64,14 +55,6 @@ class XianyuApiClient:
         self.settings = load_settings()
         self.http_client = HttpClient(cookies=cookies, device_id=device_id)
         self.ws_client = WebSocketClient(self.http_client)
-        
-        self.browser_bridge = BrowserBridge()
-        self.keepalive_service = HttpKeepaliveService(
-            http_client=self.http_client,
-            browser_bridge=self.browser_bridge,
-            interval_minutes=240,
-            max_captcha_retries=3,
-        )
         
         self.ws_status = "disconnected"
         self.ws_last_error = None
@@ -461,21 +444,7 @@ class XianyuApiClient:
 
     async def close(self):
         """关闭客户端"""
-        await self.stop_keepalive()
         if self.http_client:
             self.http_client.close()
         if self.websocket_pool:
             await self.websocket_pool.stop()
-
-    async def start_keepalive(self) -> bool:
-        if not self.http_client or not self.keepalive_service:
-            return False
-        session = await self.http_client.check_session()
-        if not session.get("valid"):
-            return False
-        self.keepalive_service.start()
-        return True
-
-    async def stop_keepalive(self) -> None:
-        if self.keepalive_service:
-            await self.keepalive_service.stop()
