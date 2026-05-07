@@ -195,15 +195,7 @@ curl -X POST http://localhost:8080/rest/login_poll \
 - 返回 `status: connected/starting/disconnected/failed`
 - 返回 `started_at` 时间戳
 
-### 10. xianyu_get_access_token (获取 Access Token)
-```bash
-./scripts/mcp-dev call xianyu_get_access_token
-```
-**验证点**:
-- 返回 `success: true`
-- 返回脱敏的 `access_token` (如 `oauth_k1:abc...`)
-
-### 11. xianyu_list_conversations (获取对话列表)
+### 10. xianyu_list_conversations (获取对话列表)
 ```bash
 ./scripts/mcp-dev call xianyu_list_conversations --limit 10
 ```
@@ -212,7 +204,7 @@ curl -X POST http://localhost:8080/rest/login_poll \
 - 返回 `source: websocket` 或 `source: cache`
 - 返回 `conversations` 数组，包含 `conversation_id`, `user_nick`, `last_message` 等
 
-### 12. xianyu_get_messages (获取消息历史)
+### 11. xianyu_get_messages (获取消息历史)
 ```bash
 ./scripts/mcp-dev call xianyu_get_messages --conversation-id 60971615689 --limit 5
 ```
@@ -254,7 +246,6 @@ curl -X POST http://localhost:8080/rest/login_poll \
 | `xianyu_publish_from_item_url` | 未回归 | 新增按链接铺货工具，待补真实链路验证 |
 | `xianyu_ws_send` | 成功 | 真实发送成功，见下文 |
 | `xianyu_ws_status` | 成功 | `connected: true` |
-| `xianyu_get_access_token` | 成功 | 返回脱敏的 `access_token` |
 | `xianyu_list_conversations` | 成功 | `source: websocket` |
 | `xianyu_get_messages` | 成功 | `source: websocket`，返回真实消息历史 |
 
@@ -330,7 +321,7 @@ python3 scripts/mcp-dev call xianyu_publish_from_item_url --item-url "https://ww
 - 若任一步失败，会返回 `failed_step` 和完整 `logs`，用于排查。
 - 若源商品存在规格价格，系统会取最低规格价作为发布价。
 
-### 默认 `8080` 实例的 accessToken 与 WebSocket 修复验证
+### 默认 `8080` 实例的 WebSocket 修复验证
 
 本次修复针对滑块验证误判和拖动不稳定问题，关键改动包括：
 
@@ -342,19 +333,10 @@ python3 scripts/mcp-dev call xianyu_publish_from_item_url --item-url "https://ww
 验证命令：
 
 ```bash
-python3 scripts/mcp-dev call xianyu_get_access_token
 python3 scripts/mcp-dev call xianyu_ws_status
 ```
 
 返回：
-
-```json
-{
-  "success": true,
-  "access_token": "oauth_k1:SCzHbbXly8L...",
-  "access_token_masked": "oauth_k1:SCzHbbXly8L..."
-}
-```
 
 ```json
 {

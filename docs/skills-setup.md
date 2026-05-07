@@ -40,7 +40,7 @@ Claude Code 可直接使用该目录；OpenCode 如需使用，需要将对应�
 ```yaml
 ---
 name: xianyu-skill
-description: Use when managing one or more Xianyu accounts via MCP
+description: Use when operating the local Xianyu MCP service through scripts or tool calls
 ---
 ```
 
@@ -57,21 +57,22 @@ description: Use when managing one or more Xianyu accounts via MCP
 
 核心规则：
 
-1. **先选用户，再做操作** - 大多数操作需明确 `user_id`
-2. **多用户场景不能省略 user_id** - 避免随机选择账号
-3. **搜索不能按曝光度排序** - 需要二次排序
-4. **发布成功≠上架** - 特殊类目可能保存为草稿
+1. **先确认登录态，再做业务操作** - 搜索、发布、消息相关操作前先调用 `xianyu_check_session`
+2. **当前是单用户模式** - `user_id` 只是兼容占位参数，通常不需要传
+3. **搜索不能按曝光度排序** - 需要拿到结果后本地二次排序
+4. **发布成功≠一定上架** - 特殊类目可能保存为草稿
 
 工具速查：
 
 | 工具 | 用途 |
 |------|------|
-| `xianyu_list_users` | 查看全部用户 |
-| `xianyu_create_user` | 创建新用户 |
 | `xianyu_login` | 发起登录 |
 | `xianyu_check_session` | 检查登录态 |
 | `xianyu_search` | 搜索商品 |
-| `xianyu_publish` | 复制发布商品 |
+| `xianyu_get_detail` | 获取商品详情 |
+| `xianyu_publish` | 发布商品 |
+| `xianyu_publish_from_item_url` | 按商品链接铺货 |
+| `xianyu_ws_status` | 查看 WebSocket 状态 |
 
 ### xianyu-hot-product-analysis
 
@@ -88,10 +89,10 @@ OpenCode 会自动显示其自身 skill 目录中已安装的技能列表，并�
 Claude Code 会在需要时自动调用 Skills。可通过自然语言验证：
 
 ```
-帮我查看当前闲鱼用户
+帮我检查当前闲鱼登录态
 ```
 
-如果 AI 正确调用 `xianyu_list_users` 并遵循 Skills 规则，说明安装成功。
+如果 AI 正确调用 `xianyu_check_session` 并遵循 Skills 规则，说明安装成功。
 
 ## 独立安装
 

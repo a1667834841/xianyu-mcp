@@ -49,8 +49,7 @@ description: Use when operating the local Xianyu MCP service through scripts or 
 ### WebSocket 排障流程
 
 1. `xianyu_ws_status`
-2. `xianyu_get_access_token`
-3. 再看 `xianyu_list_conversations` / `xianyu_get_messages`
+2. 再看 `xianyu_list_conversations` / `xianyu_get_messages`
 
 ## MCP 方法
 
@@ -213,18 +212,6 @@ description: Use when operating the local Xianyu MCP service through scripts or 
 示例：
 ```bash
 ./scripts/mcp-dev call xianyu_ws_status
-```
-
-### `xianyu_get_access_token`
-
-用途：获取 WebSocket access token 脱敏值。
-
-参数：
-- `user_id`：可选，占位参数
-
-示例：
-```bash
-./scripts/mcp-dev call xianyu_get_access_token
 ```
 
 ### `xianyu_list_conversations`

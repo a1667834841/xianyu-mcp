@@ -150,22 +150,6 @@ class TestMCPHttpToolsIntegration:
         assert payload["status"] == "connected"
 
     @pytest.mark.asyncio
-    async def test_xianyu_get_access_token_success(self):
-        """HTTP/SSE accessToken 工具返回脱敏预览。"""
-        mock_client = AsyncMock()
-        mock_client.http_client.get_access_token.return_value = "oauth_k1:abcdefghijklmnopqrstuvwxyz"
-
-        with patch.object(http_server, "get_client", return_value=mock_client):
-            payload = json.loads(await http_server.xianyu_get_access_token())
-
-        assert payload == {
-            "success": True,
-            "access_token": "oauth_k1:abcdefghijk...",
-            "access_token_masked": "oauth_k1:abcdefghijk...",
-        }
-        assert "abcdefghijklmnopqrstuvwxyz" not in json.dumps(payload)
-
-    @pytest.mark.asyncio
     async def test_xianyu_list_conversations_success(self):
         """HTTP/SSE 对话列表工具使用 WebSocket RPC 返回格式。"""
         class FakeWsClient:

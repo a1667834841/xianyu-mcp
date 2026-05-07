@@ -62,6 +62,13 @@ def test_install_fake_mcp_clears_cached_http_server_module(monkeypatch):
     assert hasattr(http_server, "xianyu_login")
 
 
+def test_access_token_tool_is_not_exposed(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    assert not hasattr(http_server, "xianyu_get_access_token")
+
+
 @pytest.mark.asyncio
 async def test_xianyu_search_returns_requested_and_stop_reason(monkeypatch):
     _install_fake_mcp(monkeypatch)
@@ -390,52 +397,6 @@ async def test_http_ws_status_returns_detailed_status(monkeypatch):
     assert payload["connected"] is False
     assert payload["status"] == "failed"
     assert payload["last_error"] == "token failed"
-
-
-@pytest.mark.asyncio
-async def test_get_access_token_returns_failure_when_empty(monkeypatch):
-    _install_fake_mcp(monkeypatch)
-    import mcp_server.http_server as http_server
-
-    class FakeHttpClient:
-        async def get_access_token(self):
-            return ""
-
-    class FakeClient:
-        http_client = FakeHttpClient()
-
-    monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
-
-    payload = json.loads(await http_server.xianyu_get_access_token())
-
-    assert payload == {
-        "success": False,
-        "error_code": "ACCESS_TOKEN_UNAVAILABLE",
-        "message": "accessToken 获取失败",
-    }
-
-
-@pytest.mark.asyncio
-async def test_get_access_token_returns_structured_failure_on_exception(monkeypatch):
-    _install_fake_mcp(monkeypatch)
-    import mcp_server.http_server as http_server
-
-    class FakeHttpClient:
-        async def get_access_token(self):
-            raise RuntimeError("token endpoint failed")
-
-    class FakeClient:
-        http_client = FakeHttpClient()
-
-    monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
-
-    payload = json.loads(await http_server.xianyu_get_access_token())
-
-    assert payload == {
-        "success": False,
-        "error_code": "ACCESS_TOKEN_ERROR",
-        "message": "accessToken 获取异常",
-    }
 
 
 @pytest.mark.asyncio
@@ -989,59 +950,6 @@ async def test_http_ws_status_reports_connected(monkeypatch):
         "status": "connected",
         "last_error": None,
         "started_at": "2026-05-03T13:00:00",
-    }
-
-
-@pytest.mark.asyncio
-async def test_http_get_access_token_success_with_token(monkeypatch):
-    _install_fake_mcp(monkeypatch)
-    import mcp_server.http_server as http_server
-
-    class FakeHttpClient:
-        async def get_access_token(self):
-            return "oauth_k1:abcdefghijklmnopqrstuvwxyz"
-
-    class FakeClient:
-        http_client = FakeHttpClient()
-
-    monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
-
-    payload = json.loads(await http_server.xianyu_get_access_token())
-
-    assert payload == {
-        "success": True,
-        "access_token": "oauth_k1:abcdefghijk...",
-        "access_token_masked": "oauth_k1:abcdefghijk...",
-    }
-    assert "abcdefghijklmnopqrstuvwxyz" not in json.dumps(payload)
-
-
-@pytest.mark.asyncio
-async def test_get_access_token_falls_back_to_cached_token_when_live_fetch_empty(monkeypatch):
-    _install_fake_mcp(monkeypatch)
-    import mcp_server.http_server as http_server
-
-    class FakeHttpClient:
-        _token = "oauth_k1:cachedtokenvalue123456"
-
-        async def get_access_token(self):
-            return ""
-
-    class FakeClient:
-        http_client = FakeHttpClient()
-
-        def get_ws_status(self):
-            return {"connected": True, "status": "connected", "last_error": None}
-
-    monkeypatch.setattr(http_server, "get_client", lambda: FakeClient())
-
-    payload = json.loads(await http_server.xianyu_get_access_token())
-
-    assert payload == {
-        "success": True,
-        "access_token": "oauth_k1:cachedtoken...",
-        "access_token_masked": "oauth_k1:cachedtoken...",
-        "source": "cache",
     }
 
 

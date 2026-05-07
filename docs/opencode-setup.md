@@ -68,7 +68,7 @@ OpenCode Skills 通过 `SKILL.md` 文件定义。对 OpenCode 而言，可直接
 ```yaml
 ---
 name: xianyu-skill
-description: Use when managing one or more Xianyu accounts via MCP
+description: Use when operating the local Xianyu MCP service through scripts or tool calls
 ---
 ```
 
@@ -106,10 +106,10 @@ Skills 通过 `skill` 工具按需加载。OpenCode 会自动显示其已安装 
 本地调试 MCP 时，可以直接调用 `scripts/mcp-dev`：
 
 ```bash
-./scripts/mcp-dev call xianyu_list_users
-./scripts/mcp-dev call xianyu_login --user-id user-001
-./scripts/mcp-dev call xianyu_check_session --user-id user-001
-./scripts/mcp-dev call xianyu_search --user-id user-001 --keyword 机械键盘 --rows 5
+./scripts/mcp-dev call xianyu_check_session
+./scripts/mcp-dev call xianyu_login
+./scripts/mcp-dev call xianyu_search --keyword 机械键盘 --rows 5
+./scripts/mcp-dev call xianyu_ws_status
 ```
 
 - 默认请求地址为 `http://127.0.0.1:${MCP_HOST_PORT:-8080}/mcp`

@@ -285,52 +285,6 @@ async def xianyu_ws_status(user_id: str | None = None) -> str:
 
 
 @mcp.tool()
-async def xianyu_get_access_token(user_id: str | None = None) -> str:
-    """获取 WebSocket accessToken"""
-    client = get_client()
-    try:
-        token = await client.http_client.get_access_token()
-        if not token:
-            cached_token = getattr(client.http_client, "_token", "")
-            ws_status_getter = getattr(client, "get_ws_status", None)
-            ws_status = ws_status_getter() if callable(ws_status_getter) else {}
-            if cached_token and ws_status.get("connected"):
-                masked_token = _mask_token(cached_token)
-                return json.dumps(
-                    {
-                        "success": True,
-                        "access_token": masked_token,
-                        "access_token_masked": masked_token,
-                        "source": "cache",
-                    },
-                    ensure_ascii=False,
-                )
-        if not token:
-            return json.dumps(
-                {
-                    "success": False,
-                    "error_code": "ACCESS_TOKEN_UNAVAILABLE",
-                    "message": "accessToken 获取失败",
-                },
-                ensure_ascii=False,
-            )
-        masked_token = _mask_token(token)
-        return json.dumps(
-            {"success": True, "access_token": masked_token, "access_token_masked": masked_token},
-            ensure_ascii=False,
-        )
-    except Exception as e:
-        return json.dumps(
-            {
-                "success": False,
-                "error_code": "ACCESS_TOKEN_ERROR",
-                "message": "accessToken 获取异常",
-            },
-            ensure_ascii=False,
-        )
-
-
-@mcp.tool()
 async def xianyu_list_conversations(user_id: str | None = None, limit: int = 20) -> str:
     """获取对话列表，优先实时 WebSocket RPC，失败或未连接时回退缓存。"""
     client = get_client()
@@ -523,12 +477,6 @@ def _format_rpc_conversation(conv: Dict[str, Any]) -> Dict[str, Any]:
         "unread_count": conv.get("unread_count", 0),
         "item_id": conv.get("item_id", ""),
     }
-
-
-def _mask_token(token: str) -> str:
-    if len(token) <= 20:
-        return token[:4] + "..." if len(token) > 4 else "..."
-    return token[:20] + "..."
 
 
 def _format_cached_conversations(client, limit: int) -> List[Dict[str, Any]]:

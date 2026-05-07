@@ -1,6 +1,7 @@
 services:
   # 浏览器服务
   browser:
+    container_name: ${XIANYU_BROWSER_CONTAINER_NAME:-xianyu-browser}
     image: ${XIANYU_BROWSER_IMAGE:-registry.cn-hangzhou.aliyuncs.com/ggball/chrome-headless-shell-zh:multi}
     build:
       context: .
@@ -27,6 +28,7 @@ services:
 
   # MCP服务
   mcp-server:
+    container_name: ${XIANYU_MCP_CONTAINER_NAME:-xianyu-mcp-server}
     image: ${XIANYU_MCP_IMAGE:-registry.cn-hangzhou.aliyuncs.com/ggball/xianyu-mcp:latest}
     build:
       context: .
