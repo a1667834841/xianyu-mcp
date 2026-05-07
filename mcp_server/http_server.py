@@ -57,10 +57,7 @@ async def initialize_manager() -> None:
     except Exception as exc:
         logger.warning(f"[MCP HTTP] WS 自动启动失败，不阻塞服务启动: {exc}")
 
-    try:
-        await client.start_keepalive()
-    except Exception as exc:
-        logger.warning(f"[MCP HTTP] Keepalive 自动启动失败，不阻塞服务启动: {exc}")
+
 
 
 async def shutdown_manager() -> None:
@@ -79,10 +76,7 @@ async def shutdown_manager() -> None:
     except Exception as exc:
         logger.warning(f"[MCP HTTP] WS 自动停止失败，不阻塞服务关闭: {exc}")
 
-    try:
-        await client.stop_keepalive()
-    except Exception as exc:
-        logger.warning(f"[MCP HTTP] Keepalive 自动停止失败，不阻塞服务关闭: {exc}")
+
 
 
 async def _auto_login_poll(client, t: str, ck: str, attempts: int = 120, interval: float = 2.0) -> None:

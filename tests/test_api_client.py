@@ -451,61 +451,13 @@ class TestXianyuApiClient:
         assert client.ws_last_error == "accessToken 获取失败"
 
     @pytest.mark.asyncio
-    async def test_client_starts_http_keepalive_when_session_valid(self):
+    async def test_client_no_longer_has_keepalive(self):
+        """验证 keepalive 相关属性和方法已被移除"""
         client = XianyuApiClient()
-
-        class FakeKeepalive:
-            def __init__(self):
-                self.started = False
-
-            def start(self):
-                self.started = True
-
-        client.keepalive_service = FakeKeepalive()
-
-        with patch.object(client.http_client, "check_session", new_callable=AsyncMock) as mock_check:
-            mock_check.return_value = {"valid": True}
-            result = await client.start_keepalive()
-
-        assert result is True
-        assert client.keepalive_service.started is True
-
-    @pytest.mark.asyncio
-    async def test_client_does_not_start_http_keepalive_when_session_invalid(self):
-        client = XianyuApiClient()
-
-        class FakeKeepalive:
-            def __init__(self):
-                self.started = False
-
-            def start(self):
-                self.started = True
-
-        client.keepalive_service = FakeKeepalive()
-
-        with patch.object(client.http_client, "check_session", new_callable=AsyncMock) as mock_check:
-            mock_check.return_value = {"valid": False}
-            result = await client.start_keepalive()
-
-        assert result is False
-        assert client.keepalive_service.started is False
-
-    @pytest.mark.asyncio
-    async def test_client_stops_http_keepalive(self):
-        client = XianyuApiClient()
-
-        class FakeKeepalive:
-            def __init__(self):
-                self.stopped = False
-
-            async def stop(self):
-                self.stopped = True
-
-        client.keepalive_service = FakeKeepalive()
-
-        await client.stop_keepalive()
-
-        assert client.keepalive_service.stopped is True
+        assert not hasattr(client, 'keepalive_service')
+        assert not hasattr(client, 'browser_bridge')
+        assert not hasattr(client, 'start_keepalive')
+        assert not hasattr(client, 'stop_keepalive')
 
     @pytest.mark.asyncio
     async def test_get_ws_status_reports_internal_failure(self):
