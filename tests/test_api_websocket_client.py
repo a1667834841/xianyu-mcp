@@ -1,15 +1,21 @@
+import asyncio
+import json
+
 import pytest
 from unittest.mock import AsyncMock
 
+from src.api.hook_notifier import HookNotifier
 from src.api.websocket_client import WebSocketClient
+from src.settings import HookSettings
+
+
+class FakeHttpClient:
+    cookies = {"unb": "4188939592"}
+    device_id = "web_4188939592"
 
 
 @pytest.mark.asyncio
 async def test_create_conversation_sends_single_chat_create_rpc():
-    class FakeHttpClient:
-        cookies = {"unb": "4188939592"}
-        device_id = "web_4188939592"
-
     client = WebSocketClient(FakeHttpClient())
     client._running = True
     client.ws = object()
@@ -34,10 +40,6 @@ async def test_create_conversation_sends_single_chat_create_rpc():
 
 @pytest.mark.asyncio
 async def test_create_conversation_reads_cid_from_single_chat_conversation_body():
-    class FakeHttpClient:
-        cookies = {"unb": "4188939592"}
-        device_id = "web_4188939592"
-
     client = WebSocketClient(FakeHttpClient())
     client._running = True
     client.ws = object()
@@ -57,18 +59,6 @@ async def test_create_conversation_reads_cid_from_single_chat_conversation_body(
     assert result == {"success": True, "conversation_id": "61324594446"}
 
 
-import asyncio
-import json
-
-from src.api.hook_notifier import HookNotifier
-from src.settings import HookSettings
-
-
-class FakeHttpClient:
-    cookies = {"unb": "4188939592"}
-    device_id = "web_4188939592"
-
-
 class RecordingNotifier:
     def __init__(self):
         self.calls = []
@@ -84,8 +74,7 @@ class RecordingNotifier:
         })
 
 
-@pytest.mark.asyncio
-async def test_hook_notifier_skips_when_url_template_missing():
+def test_hook_notifier_skips_when_url_template_missing():
     notifier = HookNotifier(HookSettings(url_template="", timeout_seconds=5, enabled_events=("message.received",)))
 
     assert notifier.is_enabled() is False
