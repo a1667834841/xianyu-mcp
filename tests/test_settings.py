@@ -483,6 +483,23 @@ def test_hook_settings_env_override_config(tmp_path, monkeypatch):
     assert settings.hook.enabled_events == ("message.received",)
 
 
+def test_load_settings_for_user_preserves_hook_settings(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({
+        "hook": {
+            "url_template": "http://example.com/hooks/{user_id}",
+            "timeout_seconds": 12,
+            "enabled_events": ["message.received", "order.created"],
+        }
+    }))
+
+    settings = load_settings_for_user("target-user", config_path=config_path)
+
+    assert settings.hook.url_template == "http://example.com/hooks/{user_id}"
+    assert settings.hook.timeout_seconds == 12
+    assert settings.hook.enabled_events == ("message.received", "order.created")
+
+
 def test_hook_settings_invalid_values_fall_back(tmp_path, monkeypatch):
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps({

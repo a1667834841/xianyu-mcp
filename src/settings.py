@@ -416,4 +416,7 @@ def load_settings_for_user(
         keepalive_max_captcha_retries=base_settings.keepalive.max_captcha_retries,
         max_stale_pages=base_settings.search.max_stale_pages,
         create_conversation_greeting=base_settings.messaging.create_conversation_greeting,
+        hook_url_template=base_settings.hook.url_template,
+        hook_timeout_seconds=base_settings.hook.timeout_seconds,
+        hook_enabled_events=base_settings.hook.enabled_events,
     )
