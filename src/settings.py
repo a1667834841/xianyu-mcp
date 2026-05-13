@@ -380,14 +380,7 @@ def load_settings(config_path: Path | None = None) -> AppSettings:
         storage=storage_settings,
         keepalive=keepalive_settings,
         search=search_settings,
-        messaging=MessagingSettings(
-            create_conversation_greeting=_coerce_greeting(
-                env_greeting
-                if env_greeting is not None
-                else messaging_cfg.get("create_conversation_greeting"),
-                DEFAULT_CREATE_CONVERSATION_GREETING,
-            )
-        ),
+        messaging=messaging_settings,
         hook=hook_settings,
     )
 
