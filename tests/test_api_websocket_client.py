@@ -2,7 +2,7 @@ import asyncio
 import json
 
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from src.api.hook_notifier import HookNotifier
 from src.api.websocket_client import WebSocketClient
@@ -81,12 +81,39 @@ def test_hook_notifier_skips_when_url_template_missing():
     assert notifier.is_event_enabled("message.received") is False
 
 
+def test_hook_notifier_builds_user_scoped_payload():
+    notifier = HookNotifier(HookSettings(
+        url_template="http://hooks.example/{user_id}/events",
+        timeout_seconds=5,
+        enabled_events=("message.received",),
+    ))
+
+    event = {
+        "cid": "conv-abc",
+        "sender_id": "seller-42",
+        "sender_name": "卖家小王",
+        "timestamp": 1715566830.123,
+        "segments": [{"type": "text", "content": {"text": "你好"}}],
+    }
+
+    payload = notifier.build_payload("message.received", "user-001", event)
+
+    assert payload["event"] == "message.received"
+    assert payload["user_id"] == "user-001"
+    assert "occurred_at" in payload
+    assert payload["data"]["conversation_id"] == "conv-abc"
+    assert payload["data"]["sender_id"] == "seller-42"
+    assert payload["data"]["sender_name"] == "卖家小王"
+    assert payload["data"]["timestamp"] == 1715566830.123
+    assert payload["data"]["segments"] == [{"type": "text", "content": {"text": "你好"}}]
+
+
 @pytest.mark.asyncio
 async def test_handle_raw_message_dispatches_message_received_hook():
     notifier = RecordingNotifier()
     client = WebSocketClient(FakeHttpClient(), user_id="user-001", hook_notifier=notifier)
     client._my_id = "self-user"
-    client._update_cache_from_event = AsyncMock()
+    client._update_cache_from_event = MagicMock()
 
     payload = {
         "lwp": "/sync",
@@ -128,7 +155,7 @@ async def test_handle_raw_message_skips_hook_for_self_sent_message():
     notifier = RecordingNotifier()
     client = WebSocketClient(FakeHttpClient(), user_id="user-001", hook_notifier=notifier)
     client._my_id = "self-user"
-    client._update_cache_from_event = AsyncMock()
+    client._update_cache_from_event = MagicMock()
 
     payload = {
         "lwp": "/sync",
@@ -172,7 +199,7 @@ async def test_handle_raw_message_hook_failure_does_not_break_handlers():
     seen = []
     client = WebSocketClient(FakeHttpClient(), user_id="user-001", hook_notifier=FailingNotifier())
     client._my_id = "self-user"
-    client._update_cache_from_event = AsyncMock()
+    client._update_cache_from_event = MagicMock()
     client.on_message(lambda event: seen.append(event["cid"]))
 
     payload = {
