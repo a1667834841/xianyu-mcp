@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, List
 from .http_client import HttpClient
 from .websocket_client import WebSocketClient
 from .websocket_pool import WebSocketPool
+from .hook_notifier import HookNotifier
 from .types import Conversation
 from src.settings import load_settings_for_user
 from src.sourcing_service import SourcingService
@@ -39,7 +40,12 @@ class XianyuApiClient:
         )
         self._token_dir = self.settings.storage.token_file.parent
         self.http_client = HttpClient(cookies=None, device_id="", data_dir=self._token_dir)
-        self.ws_client = WebSocketClient(self.http_client)
+        hook_notifier = HookNotifier(self.settings.hook)
+        self.ws_client = WebSocketClient(
+            self.http_client,
+            user_id=self.user_id,
+            hook_notifier=hook_notifier,
+        )
         self.websocket_pool = WebSocketPool()
         
         self.ws_status = "disconnected"
@@ -66,7 +72,12 @@ class XianyuApiClient:
         )
         self._token_dir = self.settings.storage.token_file.parent
         self.http_client = HttpClient(cookies=cookies, device_id=device_id, data_dir=self._token_dir)
-        self.ws_client = WebSocketClient(self.http_client)
+        hook_notifier = HookNotifier(self.settings.hook)
+        self.ws_client = WebSocketClient(
+            self.http_client,
+            user_id=self.user_id,
+            hook_notifier=hook_notifier,
+        )
         
         self.ws_status = "disconnected"
         self.ws_last_error = None

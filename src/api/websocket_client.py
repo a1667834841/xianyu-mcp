@@ -38,8 +38,10 @@ class WebSocketClient:
     HEARTBEAT_INTERVAL = 15
     MAX_SAFE_INTEGER = 9007199254740991
     
-    def __init__(self, http_client):
+    def __init__(self, http_client, user_id: str = "", hook_notifier=None):
         self.http_client = http_client
+        self.user_id = user_id
+        self.hook_notifier = hook_notifier
         self.ws: Optional[websockets.ClientConnection] = None
         self.cache = ConversationCache()
         
@@ -374,6 +376,8 @@ class WebSocketClient:
                     
                     self._update_cache_from_event(event, segments)
                     
+                    asyncio.create_task(self._dispatch_message_received_hook(event))
+                    
                     for handler in self._on_message_handlers:
                         try:
                             if asyncio.iscoroutinefunction(handler):
@@ -389,6 +393,32 @@ class WebSocketClient:
         except Exception as e:
             logger.error(f"[WebSocket] 处理原始消息错误: {e}")
     
+    async def _dispatch_message_received_hook(self, event: Dict[str, Any]) -> None:
+        notifier = self.hook_notifier
+        if notifier is None:
+            return
+        if not self.user_id:
+            return
+        if not event.get("cid") or not event.get("sender_id"):
+            return
+        if not notifier.is_event_enabled("message.received"):
+            return
+
+        try:
+            await notifier.notify(
+                event_name="message.received",
+                user_id=self.user_id,
+                event=event,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Hook notify raised error: event=%s user_id=%s conversation_id=%s error=%s",
+                "message.received",
+                self.user_id,
+                event.get("cid", ""),
+                exc,
+            )
+
     async def send_rpc(self, lwp_path: str, body: List[Any], timeout: int = 15000) -> Dict[str, Any]:
         """通过 WebSocket 发送 RPC 请求并等待响应"""
         if not self.ws or not self._connected:
