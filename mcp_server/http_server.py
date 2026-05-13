@@ -9,9 +9,12 @@ import json
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dataclasses import asdict
 from typing import Dict, List, Any
+
+from dotenv import load_dotenv
+load_dotenv()
 
 from mcp.server.fastmcp import FastMCP
 from starlette.responses import JSONResponse
@@ -20,6 +23,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.api.client import XianyuApiClient
 from src.settings import load_settings
+from src.user_manager import UserManager
+from src.client_manager import ClientManager
+from src.pending_login_manager import PendingLoginManager
 
 logger = logging.getLogger(__name__)
 
@@ -27,35 +33,104 @@ CDP_HOST = os.environ.get("CDP_HOST", "chrome-headless")
 CDP_PORT = int(os.environ.get("CDP_PORT", "9222"))
 MCP_HOST = os.environ.get("MCP_HOST", "0.0.0.0")
 MCP_PORT = int(os.environ.get("MCP_PORT", "8080"))
+PENDING_LOGIN_CLIENT_ID = "__pending_login__"
 
 print(f"[MCP HTTP] 服务端口={MCP_PORT}")
 
-_client = None
+_user_manager = None
+_client_manager = None
+_pending_login_manager = None
 _login_poll_task = None
 
+def get_user_manager():
+    global _user_manager
+    if _user_manager is None:
+        settings = load_settings()
+        _user_manager = UserManager(data_root=settings.storage.data_root)
+    return _user_manager
+
+def get_client_manager():
+    global _client_manager
+    if _client_manager is None:
+        settings = load_settings()
+        _client_manager = ClientManager(
+            user_manager=get_user_manager(),
+            data_root=settings.storage.data_root,
+        )
+    return _client_manager
+
+
+def get_pending_login_manager():
+    global _pending_login_manager
+    if _pending_login_manager is None:
+        _pending_login_manager = PendingLoginManager()
+    return _pending_login_manager
+
 def get_client():
-    global _client
-    if _client is None:
-        _client = XianyuApiClient()
-    return _client
+    return get_client_manager().get_client("default")
+
+def _resolve_user_id(user_id: str | None) -> str:
+    if user_id:
+        return user_id
+    return str(get_user_manager().get_default_user()["user_id"])
+
+
+SHANGHAI_TZ = timezone(timedelta(hours=8))
+
+
+def _now_iso() -> str:
+    return datetime.now(SHANGHAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _format_display_time(value):
+    if not isinstance(value, str) or not value.strip():
+        return value
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return value
+    return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+
+async def _activate_user_runtime(user_id: str, reason: str) -> dict[str, Any]:
+    settings = load_settings()
+    user = get_user_manager().get_user(user_id)
+    client = get_client_manager().get_client(user_id)
+
+    if user.get("keepalive_enabled", True):
+        await get_client_manager().start_keepalive(
+            user_id,
+            settings.keepalive.interval_minutes,
+        )
+
+    await client.ensure_ws_started(reason=reason)
+    return {
+        "ws_auto_start": True,
+        "ws_status": client.get_ws_status(),
+    }
 
 
 async def initialize_manager() -> None:
-    client = get_client()
-    try:
-        result = await client.check_session()
-    except Exception as exc:
-        logger.warning(f"[MCP HTTP] 启动时检查会话失败，跳过 WS 自动启动: {exc}")
-        return
-
-    if not result.get("valid"):
-        logger.info("[MCP HTTP] Cookie 无效，跳过 WS 自动启动")
-        return
-
-    try:
-        await client.ensure_ws_started(reason="service_start")
-    except Exception as exc:
-        logger.warning(f"[MCP HTTP] WS 自动启动失败，不阻塞服务启动: {exc}")
+    for user in get_user_manager().list_users():
+        if user.get("status") != "active" or not user.get("keepalive_enabled", True):
+            continue
+        user_id = user["user_id"]
+        client = get_client_manager().get_client(user_id)
+        try:
+            result = await client.check_session()
+        except Exception as exc:
+            logger.warning(f"[MCP HTTP] 用户 {user_id} 启动时检查会话失败: {exc}")
+            get_user_manager().update_user(user_id, status="error")
+            continue
+        if result.get("valid"):
+            try:
+                await _activate_user_runtime(user_id, reason="service_start")
+            except Exception as exc:
+                logger.warning(f"[MCP HTTP] 用户 {user_id} WS 自动启动失败: {exc}")
+        else:
+            logger.info(f"[MCP HTTP] 用户 {user_id} Cookie 无效，跳过 WS/保活")
+            get_user_manager().update_user(user_id, status="expired")
 
 
 
@@ -70,11 +145,10 @@ async def shutdown_manager() -> None:
             pass
     _login_poll_task = None
 
-    client = get_client()
     try:
-        await client.stop_ws_listener()
+        await get_client_manager().shutdown()
     except Exception as exc:
-        logger.warning(f"[MCP HTTP] WS 自动停止失败，不阻塞服务关闭: {exc}")
+        logger.warning(f"[MCP HTTP] ClientManager 关闭异常: {exc}")
 
 
 
@@ -85,7 +159,7 @@ async def _auto_login_poll(client, t: str, ck: str, attempts: int = 120, interva
             result = await client.login_poll(t=t, ck=ck)
             status = result.get("status")
             if status == "CONFIRMED":
-                await client.ensure_ws_started(reason="login_confirmed")
+                await _activate_user_runtime(client.user_id, reason="login_confirmed")
                 return
             if status in {"EXPIRED", "ERROR"}:
                 logger.warning(f"[MCP HTTP] 登录轮询结束: {result}")
@@ -107,9 +181,30 @@ mcp = FastMCP(
 
 
 @mcp.tool()
+async def xianyu_show_qrcode() -> str:
+    client = get_client_manager().get_client(PENDING_LOGIN_CLIENT_ID)
+    payload = await client.show_qrcode()
+    qr_code = payload.get("qr_code")
+    qr_code_public_url = ""
+    if isinstance(qr_code, dict):
+        qr_code_public_url = str(qr_code.get("public_url") or "")
+        qr_code.pop("url", None)
+    if payload.get("success") and not payload.get("logged_in") and payload.get("t") and payload.get("ck"):
+        get_pending_login_manager().create_session(
+            t=str(payload["t"]),
+            ck=str(payload["ck"]),
+            qr_code_url=qr_code_public_url or str(payload.get("qr_code_url", "")),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        )
+        payload["phase"] = "login_required"
+    return json.dumps(payload, ensure_ascii=False)
+
+
+@mcp.tool()
 async def xianyu_login(user_id: str | None = None) -> str:
     global _login_poll_task
-    client = get_client()
+    resolved = _resolve_user_id(user_id)
+    client = get_client_manager().get_client(resolved)
     payload = await client.login()
     if payload.get("success") and not payload.get("logged_in") and payload.get("t") and payload.get("ck"):
         if _login_poll_task and not _login_poll_task.done():
@@ -121,14 +216,41 @@ async def xianyu_login(user_id: str | None = None) -> str:
 
 @mcp.tool()
 async def xianyu_check_session(user_id: str | None = None) -> str:
-    client = get_client()
-    result = await client.check_session()
-    return json.dumps(result, ensure_ascii=False)
+    if user_id:
+        client = get_client_manager().get_client(user_id)
+        result = await client.check_session()
+        return json.dumps(result, ensure_ascii=False)
+
+    sessions = []
+    user_manager = get_user_manager()
+    for user in get_user_manager().list_users():
+        uid = user["user_id"]
+        status = user.get("status", "")
+        if status == "disabled":
+            session = {
+                "valid": False,
+                "message": "用户已禁用，未执行会话检查",
+            }
+        else:
+            client = get_client_manager().get_client(uid)
+            session = await client.check_session()
+            next_status = "active" if session.get("valid") else "expired"
+            if status != next_status:
+                user_manager.update_user(uid, status=next_status)
+                status = next_status
+        sessions.append({
+            "user_id": uid,
+            "username": user.get("username", ""),
+            "status": status,
+            **session,
+        })
+    return json.dumps({"success": True, "sessions": sessions}, ensure_ascii=False)
 
 
 @mcp.tool()
 async def xianyu_refresh_token(user_id: str | None = None) -> str:
-    client = get_client()
+    resolved = _resolve_user_id(user_id)
+    client = get_client_manager().get_client(resolved)
     result = await client.refresh_token()
     return json.dumps(result, ensure_ascii=False)
 
@@ -144,7 +266,8 @@ async def xianyu_search(
     sort_field: str = "",
     sort_order: str = "",
 ) -> str:
-    client = get_client()
+    resolved = _resolve_user_id(user_id)
+    client = get_client_manager().get_client(resolved)
     result = await client.search(
         keyword=keyword,
         rows=rows,
@@ -158,8 +281,9 @@ async def xianyu_search(
 
 
 @mcp.tool()
-async def xianyu_suggest_keywords(input_words: str = "x") -> str:
-    client = get_client()
+async def xianyu_suggest_keywords(user_id: str | None = None, input_words: str = "x") -> str:
+    resolved = _resolve_user_id(user_id)
+    client = get_client_manager().get_client(resolved)
     result = await client.http_client.suggest_keywords(input_words=input_words)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -186,7 +310,8 @@ async def xianyu_publish(
         self_pickup: 是否支持自提
         post_price: 物流费用（一口价时使用）
     """
-    client = get_client()
+    resolved = _resolve_user_id(user_id)
+    client = get_client_manager().get_client(resolved)
     
     # 解析图片路径
     paths = [p.strip() for p in images_paths.split(",") if p.strip()]
@@ -213,21 +338,24 @@ async def xianyu_publish(
 
 @mcp.tool()
 async def xianyu_get_detail(user_id: str | None = None, item_url: str = "") -> str:
-    client = get_client()
+    resolved = _resolve_user_id(user_id)
+    client = get_client_manager().get_client(resolved)
     result = await client.get_detail(item_url=item_url)
     return json.dumps(result, ensure_ascii=False)
 
 
 @mcp.tool()
 async def xianyu_publish_from_item_url(user_id: str | None = None, item_url: str = "") -> str:
-    client = get_client()
+    resolved = _resolve_user_id(user_id)
+    client = get_client_manager().get_client(resolved)
     result = await client.publish_from_item_url(item_url=item_url)
     return json.dumps(result, ensure_ascii=False)
 
 
 @mcp.tool()
 async def xianyu_create_conversation(user_id: str | None = None, item_url: str = "") -> str:
-    client = get_client()
+    resolved = _resolve_user_id(user_id)
+    client = get_client_manager().get_client(resolved)
     if "item?id=" in item_url:
         item_id = item_url.split("item?id=")[-1].split("&")[0]
     elif "?id=" in item_url:
@@ -264,7 +392,8 @@ async def xianyu_create_conversation(user_id: str | None = None, item_url: str =
 @mcp.tool()
 async def xianyu_ws_send(user_id: str | None = None, target_id: str = "", content: str = "", image_url: str = "", conversation_id: str = "") -> str:
     """通过 WebSocket 发送消息"""
-    client = get_client()
+    resolved = _resolve_user_id(user_id)
+    client = get_client_manager().get_client(resolved)
     if not target_id:
         return json.dumps({"success": False, "message": "需要提供 target_id"}, ensure_ascii=False)
     result = await client.ws_send_message(target_id, content, image_url, conversation_id)
@@ -274,14 +403,18 @@ async def xianyu_ws_send(user_id: str | None = None, target_id: str = "", conten
 @mcp.tool()
 async def xianyu_ws_status(user_id: str | None = None) -> str:
     """检查 WebSocket 连接状态"""
-    client = get_client()
-    return json.dumps(client.get_ws_status(), ensure_ascii=False)
+    resolved = _resolve_user_id(user_id)
+    client = get_client_manager().get_client(resolved)
+    payload = client.get_ws_status()
+    payload["started_at"] = _format_display_time(payload.get("started_at"))
+    return json.dumps(payload, ensure_ascii=False)
 
 
 @mcp.tool()
 async def xianyu_list_conversations(user_id: str | None = None, limit: int = 20) -> str:
     """获取对话列表，优先实时 WebSocket RPC，失败或未连接时回退缓存。"""
-    client = get_client()
+    resolved = _resolve_user_id(user_id)
+    client = get_client_manager().get_client(resolved)
 
     status = client.get_ws_status()
     if not status.get("connected"):
@@ -368,7 +501,8 @@ async def xianyu_get_messages(
     limit: int = 50,
 ) -> str:
     """获取消息历史，优先实时 WebSocket RPC，失败或未连接时回退缓存。"""
-    client = get_client()
+    resolved = _resolve_user_id(user_id)
+    client = get_client_manager().get_client(resolved)
     
     conversation_id = str(conversation_id) if conversation_id else ""
 
@@ -459,6 +593,146 @@ async def xianyu_get_messages(
         "nextCursor": result.get("nextCursor", 0),
         "count": len(messages),
     }, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def xianyu_add_user(t: str, ck: str) -> str:
+    pending_login_manager = get_pending_login_manager()
+    try:
+        pending_login_manager.get_session(t=t, ck=ck)
+    except ValueError as exc:
+        message = str(exc)
+        phase = "expired" if "expired" in message.lower() else "error"
+        return json.dumps(
+            {
+                "success": False,
+                "phase": phase,
+                "message": message,
+            },
+            ensure_ascii=False,
+        )
+
+    client = get_client_manager().get_client(PENDING_LOGIN_CLIENT_ID)
+    poll_result = await client.login_poll(t=t, ck=ck)
+    status = poll_result.get("status")
+
+    if status != "CONFIRMED":
+        if status == "EXPIRED":
+            pending_login_manager.delete_session(t=t, ck=ck)
+        phase = "expired" if status == "EXPIRED" else "waiting_for_scan"
+        return json.dumps({"success": False, "phase": phase, **poll_result}, ensure_ascii=False)
+
+    session_result = await client.check_session()
+    if not session_result.get("valid"):
+        return json.dumps(
+            {
+                "success": False,
+                "phase": "error",
+                "message": session_result.get("message") or "登录态校验失败",
+                "session": session_result,
+            },
+            ensure_ascii=False,
+        )
+
+    identity = client.http_client.get_authenticated_user_identity()
+    nickname = await client.http_client.fetch_user_nickname()
+    username = nickname or identity["username"] or identity["user_id"]
+
+    user_manager = get_user_manager()
+    try:
+        existing_user = user_manager.get_user(identity["user_id"])
+    except ValueError:
+        existing_user = None
+
+    if existing_user and existing_user.get("status") != "disabled":
+        existing_client = get_client_manager().get_client(identity["user_id"])
+        await get_client_manager().stop_user(identity["user_id"])
+        await existing_client.initialize(
+            cookies=client.http_client.cookies,
+            device_id=client.http_client.device_id,
+        )
+        existing_client.http_client._save_auth(client.http_client.cookies)
+        refreshed_user = user_manager.update_user(
+            identity["user_id"],
+            username=username,
+            status="active",
+            last_login_at=_now_iso(),
+        )
+        runtime = await _activate_user_runtime(
+            identity["user_id"],
+            reason="login_confirmed",
+        )
+        pending_login_manager.delete_session(t=t, ck=ck)
+        return json.dumps(
+            {
+                "success": True,
+                "phase": "already_exists",
+                "message": "用户已存在，已刷新登录态",
+                "user": refreshed_user,
+                **runtime,
+            },
+            ensure_ascii=False,
+        )
+
+    try:
+        user = user_manager.add_user(
+            user_id=identity["user_id"],
+            username=username,
+        )
+    except ValueError as exc:
+        pending_login_manager.delete_session(t=t, ck=ck)
+        return json.dumps(
+            {
+                "success": False,
+                "phase": "error",
+                "message": str(exc),
+            },
+            ensure_ascii=False,
+        )
+
+    user_manager.update_user(identity["user_id"], last_login_at=_now_iso())
+    created_client = get_client_manager().get_client(identity["user_id"])
+    await created_client.initialize(
+        cookies=client.http_client.cookies,
+        device_id=client.http_client.device_id,
+    )
+    created_client.http_client._save_auth(client.http_client.cookies)
+    runtime = await _activate_user_runtime(
+        identity["user_id"],
+        reason="login_confirmed",
+    )
+    pending_login_manager.delete_session(t=t, ck=ck)
+    return json.dumps(
+        {
+            "success": True,
+            "phase": "completed",
+            "user": user,
+            **runtime,
+        },
+        ensure_ascii=False,
+    )
+
+
+@mcp.tool()
+async def xianyu_list_users() -> str:
+    users = []
+    for user in get_user_manager().list_users():
+        uid = user["user_id"]
+        runtime = {
+            "ws_connected": False,
+            "keepalive_running": get_client_manager().has_keepalive_task(uid),
+        }
+        if get_client_manager().has_client(uid):
+            runtime["ws_connected"] = get_client_manager().get_client(uid).ws_is_connected()
+        users.append({**user, **runtime})
+    return json.dumps({"success": True, "users": users}, ensure_ascii=False)
+
+
+@mcp.tool()
+async def xianyu_delete_user(user_id: str) -> str:
+    await get_client_manager().stop_user(user_id)
+    payload = get_user_manager().disable_user(user_id)
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _format_rpc_conversation(conv: Dict[str, Any]) -> Dict[str, Any]:

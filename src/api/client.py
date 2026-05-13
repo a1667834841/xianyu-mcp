@@ -1,35 +1,44 @@
 import asyncio
 import logging
 import time
+from datetime import datetime
 from typing import Dict, Any, Optional, List
 
 from .http_client import HttpClient
 from .websocket_client import WebSocketClient
 from .websocket_pool import WebSocketPool
 from .types import Conversation
-from src.settings import load_settings
+from src.settings import load_settings_for_user
 from src.sourcing_service import SourcingService
 
 logger = logging.getLogger(__name__)
 
 
-class XianyuApiClient:
-    """闲鱼统一 API 客户端（单例）"""
-    
-    _instance = None
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-    
-    def __init__(self):
-        if self._initialized:
-            return
+def _format_display_time(value: str | None) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return value
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return value
+    return parsed.strftime("%Y-%m-%d %H:%M:%S")
 
-        self.settings = load_settings()
-        self.http_client = HttpClient(cookies=None, device_id="")
+
+class XianyuApiClient:
+    """闲鱼统一 API 客户端"""
+
+    def __init__(self, user_id: str, data_root=None, config_path=None):
+        self.user_id = user_id
+        self.data_root = data_root
+        self.config_path = config_path
+        self.settings = load_settings_for_user(
+            user_id,
+            data_root=data_root,
+            config_path=config_path,
+        )
+        self._token_dir = self.settings.storage.token_file.parent
+        self.http_client = HttpClient(cookies=None, device_id="", data_dir=self._token_dir)
         self.ws_client = WebSocketClient(self.http_client)
         self.websocket_pool = WebSocketPool()
         
@@ -37,8 +46,6 @@ class XianyuApiClient:
         self.ws_last_error = None
         self.ws_started_at = None
         self._ws_start_task = None
-        
-        self._initialized = True
     
     async def initialize(self, cookies: Dict[str, str], device_id: str):
         """初始化客户端"""
@@ -52,8 +59,13 @@ class XianyuApiClient:
         if self.ws_client and self.ws_client.is_connected:
             await self.ws_client.stop()
 
-        self.settings = load_settings()
-        self.http_client = HttpClient(cookies=cookies, device_id=device_id)
+        self.settings = load_settings_for_user(
+            self.user_id,
+            data_root=self.data_root,
+            config_path=self.config_path,
+        )
+        self._token_dir = self.settings.storage.token_file.parent
+        self.http_client = HttpClient(cookies=cookies, device_id=device_id, data_dir=self._token_dir)
         self.ws_client = WebSocketClient(self.http_client)
         
         self.ws_status = "disconnected"
@@ -73,6 +85,12 @@ class XianyuApiClient:
                 "message": session.get("message", "Cookie 有效"),
             }
         return await self.http_client.login(timeout=timeout)
+
+    async def show_qrcode(self) -> Dict[str, Any]:
+        """直接生成登录二维码，不检查已有登录态。"""
+        if not self.http_client:
+            return {"success": False, "message": "客户端未初始化"}
+        return await self.http_client.login()
     
     async def login_poll(self, t: str, ck: str) -> Dict[str, Any]:
         """轮询扫码状态"""
@@ -120,6 +138,7 @@ class XianyuApiClient:
         self,
         images_paths: List[str] = None,
         title: str = "",
+        description: str = "",
         price: Dict[str, float] = None,
         shipping: str = "包邮",
         self_pickup: bool = False,
@@ -140,6 +159,7 @@ class XianyuApiClient:
             result = await self.http_client.publish(
                 images_paths=images_paths,
                 title=title,
+                description=description,
                 price=price,
                 shipping=shipping,
                 self_pickup=self_pickup,
@@ -345,7 +365,7 @@ class XianyuApiClient:
             "connected": connected,
             "status": status,
             "last_error": self.ws_last_error,
-            "started_at": self.ws_started_at,
+            "started_at": _format_display_time(self.ws_started_at),
         }
 
     async def ensure_ws_started(self, reason: str) -> Dict[str, Any]:
@@ -360,7 +380,7 @@ class XianyuApiClient:
 
         self.ws_status = "starting"
         self.ws_last_error = None
-        self.ws_started_at = time.strftime("%Y-%m-%dT%H:%M:%S")
+        self.ws_started_at = time.strftime("%Y-%m-%d %H:%M:%S")
         self._ws_start_task = asyncio.create_task(self._run_ws_start(reason, self.ws_client))
         return {"success": True, "status": "starting", "reason": reason}
 

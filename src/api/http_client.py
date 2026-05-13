@@ -4,18 +4,44 @@ import time
 import logging
 import asyncio
 import os
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import requests
 
 from .types import Conversation, ChatMessage, TextContent, ImageContent
 
 logger = logging.getLogger(__name__)
 
+SHANGHAI_TZ = timezone(timedelta(hours=8))
+
 _env_loaded = False
 _captcha_recovery_lock: asyncio.Lock | None = None
 _captcha_recovery_task: asyncio.Task | None = None
+
+
+def _format_display_time(value: Any) -> Any:
+    if not isinstance(value, str) or not value.strip():
+        return value
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return value
+    return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _format_publish_amount(value: Any) -> str:
+    try:
+        amount = Decimal(str(value)).normalize()
+    except (InvalidOperation, ValueError, TypeError):
+        return str(value)
+
+    text = format(amount, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
 
 def _load_env():
     """加载 .env 文件"""
@@ -99,8 +125,8 @@ def load_local_auth_data() -> Dict[str, Any]:
                 if isinstance(full_cookie, str) and full_cookie.strip():
                     return {
                         "cookies": _parse_full_cookie(full_cookie),
-                        "updated_at": data.get("updated_at"),
-                        "expires_at": data.get("expires_at"),
+                        "updated_at": _format_display_time(data.get("updated_at")),
+                        "expires_at": _format_display_time(data.get("expires_at")),
                         "device_id": data.get("device_id"),
                     }
         except json.JSONDecodeError:
@@ -116,13 +142,13 @@ def save_local_auth(cookies: Dict[str, str]):
     
     data_dir.mkdir(parents=True, exist_ok=True)
     
-    now = datetime.now()
+    now = datetime.now(SHANGHAI_TZ)
     expires_at = now + timedelta(hours=24)
     
     data = {
         "cookies": cookies,
-        "updated_at": now.isoformat(),
-        "expires_at": expires_at.isoformat(),
+        "updated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "expires_at": expires_at.strftime("%Y-%m-%d %H:%M:%S"),
     }
     if existing.get("device_id"):
         data["device_id"] = existing["device_id"]
@@ -137,10 +163,11 @@ class HttpClient:
     BASE_URL = "https://h5api.m.goofish.com"
     APP_KEY = "34839810"
     
-    def __init__(self, cookies: Dict[str, str] = None, device_id: str = ""):
+    def __init__(self, cookies: Dict[str, str] = None, device_id: str = "", data_dir: Path | None = None):
+        self._data_dir = data_dir
         auth_data = {}
         if cookies is None:
-            auth_data = load_local_auth_data()
+            auth_data = self._load_auth_data()
             cookies = auth_data.get("cookies", auth_data)
         self.cookies = cookies
         fallback_device_id = f"web_{cookies.get('unb', 'new')}" if isinstance(cookies, dict) else "web_new"
@@ -151,6 +178,62 @@ class HttpClient:
         self._token = ""
         self._full_cookie = ""
         self._poll_params = {}
+
+    def _get_data_dir(self) -> Path:
+        if self._data_dir is not None:
+            return self._data_dir
+        return get_data_dir()
+
+    def _load_auth_data(self) -> Dict[str, Any]:
+        data_dir = self._get_data_dir()
+        auth_file = data_dir / "auth.json"
+        if auth_file.exists():
+            try:
+                data = json.loads(auth_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+            except json.JSONDecodeError:
+                logger.warning(f"本地鉴权文件损坏")
+
+        legacy_file = data_dir / "token.json"
+        if legacy_file.exists():
+            try:
+                data = json.loads(legacy_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    if isinstance(data.get("cookies"), dict):
+                        return data
+                    full_cookie = data.get("full_cookie")
+                    if isinstance(full_cookie, str) and full_cookie.strip():
+                        return {
+                            "cookies": _parse_full_cookie(full_cookie),
+                            "updated_at": _format_display_time(data.get("updated_at")),
+                            "expires_at": _format_display_time(data.get("expires_at")),
+                            "device_id": data.get("device_id"),
+                        }
+            except json.JSONDecodeError:
+                logger.warning("本地 legacy token 文件损坏")
+        return {}
+
+    def _save_auth(self, cookies: Dict[str, str]):
+        data_dir = self._get_data_dir()
+        auth_file = data_dir / "auth.json"
+        existing = self._load_auth_data()
+
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+        now = datetime.now(SHANGHAI_TZ)
+        expires_at = now + timedelta(hours=24)
+
+        data = {
+            "cookies": cookies,
+            "updated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "expires_at": expires_at.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        if existing.get("device_id"):
+            data["device_id"] = existing["device_id"]
+
+        auth_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        logger.info(f"[HttpClient] Cookie 已保存到: {auth_file}")
     
     def update_token(self, token: str, full_cookie: str):
         """更新 token 和 cookie（从浏览器获取后）"""
@@ -180,6 +263,35 @@ class HttpClient:
                         return token_part[:last_underscore]
                 return token_part
         return ""
+
+    def get_authenticated_user_identity(self) -> Dict[str, str]:
+        """从当前认证 cookies 提取真实用户身份（不含昵称，昵称需通过 API 获取）"""
+        user_id = self.cookies.get("unb")
+        if user_id is None:
+            raise ValueError("Missing authenticated user id in session cookies")
+
+        user_id = str(user_id).strip()
+        if not user_id:
+            raise ValueError("Missing authenticated user id in session cookies")
+
+        return {
+            "user_id": user_id,
+            "username": user_id,
+        }
+
+    async def fetch_user_nickname(self) -> str:
+        """通过用户信息接口获取当前用户昵称"""
+        try:
+            api = "mtop.idle.web.user.page.nav/1.0"
+            data = {"self": True}
+            result = await self._send_request(api, data)
+            data_root = result.get("data", {})
+            module = data_root.get("module", {})
+            base = module.get("base", {})
+            nick = base.get("displayName") or data_root.get("nick") or data_root.get("nickname") or data_root.get("loginNick") or ""
+            return str(nick).strip() if nick else ""
+        except Exception:
+            return ""
     
     async def _send_request(
         self, 
@@ -362,7 +474,7 @@ class HttpClient:
     def _save_cookies_to_file(self):
         """保存 cookies 到 auth.json"""
         try:
-            save_local_auth(self.cookies)
+            self._save_auth(self.cookies)
             logger.debug("[HttpClient] cookies 已保存到文件")
         except Exception as e:
             logger.warning(f"[HttpClient] 保存 cookies 失败: {e}")
@@ -397,7 +509,7 @@ class HttpClient:
             pass
         
         if cookie_updated:
-            save_local_auth(self.cookies)
+            self._save_auth(self.cookies)
     
     async def search(self, keyword: str, rows: int = 30, **kwargs) -> List[Dict]:
         """搜索商品"""
@@ -422,7 +534,7 @@ class HttpClient:
         if resp.get("ret") and "FAIL_SYS_SESSION_EXPIRED" in resp["ret"][0]:
             raise Exception("SESSION_EXPIRED: Session 过期")
         
-        collect_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        collect_time = datetime.now(SHANGHAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
         result_list = resp.get("data", {}).get("resultList", [])
         items = []
         
@@ -861,7 +973,7 @@ class HttpClient:
     async def check_session(self) -> Dict[str, Any]:
         """检查会话是否有效"""
         try:
-            saved_cookies = load_local_auth()
+            saved_cookies = self._load_auth_data().get("cookies", {})
             if saved_cookies:
                 self.cookies = saved_cookies
                 self.session.cookies.clear()
@@ -964,6 +1076,7 @@ class HttpClient:
         self,
         images_paths: List[str],
         title: str,
+        description: str = "",
         price: Optional[Dict[str, float]] = None,
         shipping: str = "包邮",
         self_pickup: bool = False,
@@ -1024,7 +1137,7 @@ class HttpClient:
                 "simpleItem": "true",
                 "imageInfoDOList": image_info_list,
                 "itemTextDTO": {
-                    "desc": title,
+                    "desc": description or title,
                     "title": title,
                     "titleDescSeparate": False,
                 },
@@ -1059,7 +1172,7 @@ class HttpClient:
                 data["itemPostFeeDTO"].update({
                     "supportFreight": True,
                     "templateId": "0",
-                    "postPriceInCent": str(int(post_price * 100)),
+                    "postPriceInCent": _format_publish_amount(post_price),
                 })
             elif shipping == "无需邮寄":
                 data["itemPostFeeDTO"]["templateId"] = "0"
@@ -1070,9 +1183,9 @@ class HttpClient:
             # 处理价格
             if price:
                 if price.get("current_price", 0) > 0:
-                    data["itemPriceDTO"]["priceInCent"] = str(int(price["current_price"] * 100))
+                    data["itemPriceDTO"]["priceInCent"] = _format_publish_amount(price["current_price"])
                 if price.get("original_price", 0) > 0:
-                    data["itemPriceDTO"]["origPriceInCent"] = str(int(price["original_price"] * 100))
+                    data["itemPriceDTO"]["origPriceInCent"] = _format_publish_amount(price["original_price"])
             else:
                 data["defaultPrice"] = True
             

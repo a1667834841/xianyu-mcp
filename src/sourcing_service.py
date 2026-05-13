@@ -42,6 +42,7 @@ class SourcingService:
             publish_result = await self.publish_client.publish(
                 images_paths=item.images,
                 title=item.title,
+                description=item.description,
                 price={"current_price": item.price},
             )
             if not publish_result.get("success"):

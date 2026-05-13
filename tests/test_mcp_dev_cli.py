@@ -77,6 +77,33 @@ def test_parse_call_keeps_numeric_id_arguments_as_strings():
     }
 
 
+def test_parse_call_accepts_show_qrcode_without_arguments():
+    module = load_module()
+
+    tool_name, arguments = module.parse_call_args(["xianyu_show_qrcode"])
+
+    assert tool_name == "xianyu_show_qrcode"
+    assert arguments == {}
+
+
+def test_parse_call_accepts_add_user_with_t_and_ck_only():
+    module = load_module()
+    tool_name, arguments = module.parse_call_args(
+        ["xianyu_add_user", "--t", "ticket-001", "--ck", "cookie-001"]
+    )
+    assert tool_name == "xianyu_add_user"
+    assert arguments == {"t": "ticket-001", "ck": "cookie-001"}
+
+
+def test_parse_call_accepts_delete_user_argument():
+    module = load_module()
+    tool_name, arguments = module.parse_call_args(
+        ["xianyu_delete_user", "--user-id", "user-001"]
+    )
+    assert tool_name == "xianyu_delete_user"
+    assert arguments == {"user_id": "user-001"}
+
+
 def test_parse_call_rejects_missing_flag_value():
     module = load_module()
 

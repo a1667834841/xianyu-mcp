@@ -10,17 +10,35 @@ from src.settings import build_user_settings
 
 class TestXianyuApiClient:
     @pytest.mark.asyncio
-    async def test_singleton_pattern(self):
-        """测试单例模式"""
-        client1 = XianyuApiClient()
-        client2 = XianyuApiClient()
+    async def test_client_instances_are_not_singletons_across_users(self):
+        """测试不同用户客户端不是单例，且各自绑定正确的 user_id"""
+        client1 = XianyuApiClient("user-a")
+        client2 = XianyuApiClient("user-b")
         
-        assert client1 is client2
+        assert client1 is not client2
+        assert client1.settings.storage.user_id == "user-a"
+        assert client2.settings.storage.user_id == "user-b"
+
+    @pytest.mark.asyncio
+    async def test_init_loads_settings_for_explicit_user(self):
+        settings = build_user_settings(
+            user_id="user-a",
+            token_file=Path("/tmp/user-a/tokens/token.json"),
+            chrome_user_data_dir=Path("/tmp/user-a/chrome-profile"),
+            data_root=Path("/tmp"),
+            create_conversation_greeting="你好",
+        )
+
+        with patch("src.api.client.load_settings_for_user", return_value=settings) as mock_load:
+            client = XianyuApiClient("user-a")
+
+        assert client.settings is settings
+        mock_load.assert_called_once_with("user-a", data_root=None, config_path=None)
 
     @pytest.mark.asyncio
     async def test_search_delegates_http_client(self):
         """测试搜索委托给 HttpClient"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         
         with patch.object(client.http_client, "search", new_callable=AsyncMock) as mock_search:
             mock_search.return_value = []
@@ -31,7 +49,7 @@ class TestXianyuApiClient:
 
     @pytest.mark.asyncio
     async def test_login_returns_logged_in_when_session_valid(self):
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
 
         with patch.object(client.http_client, "check_session", new_callable=AsyncMock) as mock_check:
             mock_check.return_value = {"valid": True, "message": "Cookie 有效"}
@@ -42,9 +60,33 @@ class TestXianyuApiClient:
         mock_login.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_show_qrcode_bypasses_existing_session_check(self):
+        client = XianyuApiClient("default")
+
+        with patch.object(client.http_client, "check_session", new_callable=AsyncMock) as mock_check:
+            with patch.object(client.http_client, "login", new_callable=AsyncMock) as mock_login:
+                mock_login.return_value = {
+                    "success": True,
+                    "logged_in": False,
+                    "t": "token-123",
+                    "ck": "ck-123",
+                }
+
+                result = await client.show_qrcode()
+
+        assert result == {
+            "success": True,
+            "logged_in": False,
+            "t": "token-123",
+            "ck": "ck-123",
+        }
+        mock_check.assert_not_called()
+        mock_login.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
     async def test_publish_requires_images_and_title(self):
         """测试发布需要图片和标题"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         
         result = await client.publish()
         assert result["success"] is False
@@ -56,7 +98,7 @@ class TestXianyuApiClient:
 
     @pytest.mark.asyncio
     async def test_publish_returns_http_failure_when_no_browser_fallback(self):
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
 
         with patch.object(client.http_client, "publish", new_callable=AsyncMock) as mock_api:
             mock_api.return_value = {"success": False, "message": "发布接口返回非 JSON"}
@@ -74,7 +116,7 @@ class TestXianyuApiClient:
 
     @pytest.mark.asyncio
     async def test_ws_send_message_starts_websocket_before_sending(self):
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
 
         with patch.object(type(client.ws_client), 'is_connected', new_callable=PropertyMock) as mock_conn:
             mock_conn.return_value = True
@@ -91,7 +133,7 @@ class TestXianyuApiClient:
 
     @pytest.mark.asyncio
     async def test_ws_send_message_returns_start_failure_when_websocket_unavailable(self):
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
 
         with patch.object(type(client.ws_client), 'is_connected', new_callable=PropertyMock) as mock_conn:
             mock_conn.return_value = False
@@ -105,7 +147,7 @@ class TestXianyuApiClient:
 
     @pytest.mark.asyncio
     async def test_create_conversation_resolves_seller_from_detail(self):
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         client.settings = build_user_settings(
             user_id="default",
             token_file=Path("/tmp/token.json"),
@@ -149,7 +191,7 @@ class TestXianyuApiClient:
 
     @pytest.mark.asyncio
     async def test_create_conversation_uses_websocket_rpc_when_connected(self):
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         client.settings = build_user_settings(
             user_id="default",
             token_file=Path("/tmp/token.json"),
@@ -190,7 +232,7 @@ class TestXianyuApiClient:
 
     @pytest.mark.asyncio
     async def test_create_conversation_sends_default_greeting_after_creation(self):
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         client.settings = build_user_settings(
             user_id="default",
             token_file=Path("/tmp/token.json"),
@@ -229,7 +271,7 @@ class TestXianyuApiClient:
 
     @pytest.mark.asyncio
     async def test_create_conversation_returns_failure_when_greeting_send_fails(self):
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         client.settings = build_user_settings(
             user_id="default",
             token_file=Path("/tmp/token.json"),
@@ -262,8 +304,8 @@ class TestXianyuApiClient:
         }
 
     @pytest.mark.asyncio
-    async def test_create_conversation_uses_loaded_default_greeting_when_settings_not_replaced(self):
-        client = XianyuApiClient()
+    async def test_initialize_keeps_current_user_settings_binding(self):
+        client = XianyuApiClient("default")
         client.settings = build_user_settings(
             user_id="default",
             token_file=Path("/tmp/token.json"),
@@ -272,7 +314,7 @@ class TestXianyuApiClient:
             create_conversation_greeting="你好，请问还在吗？",
         )
 
-        with patch("src.api.client.load_settings") as mock_load_settings:
+        with patch("src.api.client.load_settings_for_user") as mock_load_settings:
             mock_load_settings.return_value = build_user_settings(
                 user_id="default",
                 token_file=Path("/tmp/token.json"),
@@ -282,6 +324,11 @@ class TestXianyuApiClient:
             )
 
             await client.initialize(cookies={"test": "cookie"}, device_id="test-device")
+            mock_load_settings.assert_called_once_with(
+                "default",
+                data_root=None,
+                config_path=None,
+            )
 
             with patch.object(client.http_client, "get_item_detail", new_callable=AsyncMock) as mock_detail:
                 mock_detail.return_value = {"sellerDO": {"sellerId": "2201414115913"}}
@@ -312,8 +359,32 @@ class TestXianyuApiClient:
         )
 
     @pytest.mark.asyncio
+    async def test_initialize_uses_current_instance_params(self):
+        client = XianyuApiClient("custom-user", data_root=Path("/custom/root"), config_path=Path("/custom/config.json"))
+
+        with patch("src.api.client.load_settings_for_user") as mock_load:
+            mock_load.return_value = build_user_settings(
+                user_id="custom-user",
+                token_file=Path("/custom/user-a/tokens/token.json"),
+                chrome_user_data_dir=Path("/custom/user-a/chrome-profile"),
+                data_root=Path("/custom/root"),
+                create_conversation_greeting="在吗？",
+            )
+            await client.initialize(cookies={"test": "cookie"}, device_id="test-device")
+
+        mock_load.assert_called_once_with(
+            "custom-user",
+            data_root=Path("/custom/root"),
+            config_path=Path("/custom/config.json"),
+        )
+
+    def test_constructor_injects_per_user_token_dir_into_http_client(self):
+        client = XianyuApiClient("custom-user", data_root=Path("/custom/root"))
+        assert client.http_client._data_dir == client.settings.storage.token_file.parent
+
+    @pytest.mark.asyncio
     async def test_create_conversation_rejects_own_item(self):
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         client.http_client.cookies["unb"] = "4188939592"
 
         with patch.object(client.http_client, "get_item_detail", new_callable=AsyncMock) as mock_detail:
@@ -332,7 +403,7 @@ class TestXianyuApiClient:
     @pytest.mark.asyncio
     async def test_get_ws_status_returns_correct_snapshot(self):
         """测试 get_ws_status() 返回正确快照"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         client.ws_status = "starting"
         client.ws_last_error = None
         client.ws_started_at = "2024-01-01T00:00:00"
@@ -344,12 +415,12 @@ class TestXianyuApiClient:
         assert result["connected"] is False
         assert result["status"] == "starting"
         assert result["last_error"] is None
-        assert result["started_at"] == "2024-01-01T00:00:00"
+        assert result["started_at"] == "2024-01-01 00:00:00"
 
     @pytest.mark.asyncio
     async def test_get_ws_status_returns_connected_when_connected(self):
         """测试 get_ws_status() 已连接时返回 connected"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         client.ws_status = "starting"
         with patch.object(type(client.ws_client), 'is_connected', new_callable=PropertyMock) as mock_conn:
             mock_conn.return_value = True
@@ -362,7 +433,7 @@ class TestXianyuApiClient:
     @pytest.mark.asyncio
     async def test_ensure_ws_started_fast_return_when_connected(self):
         """测试 ensure_ws_started() 已连接时的快速返回路径"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         client.ws_status = "connected"
         with patch.object(type(client.ws_client), 'is_connected', new_callable=PropertyMock) as mock_conn:
             mock_conn.return_value = True
@@ -376,7 +447,7 @@ class TestXianyuApiClient:
     @pytest.mark.asyncio
     async def test_ensure_ws_started_idempotent_when_starting(self):
         """测试 ensure_ws_started() 启动中时的幂等返回"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         client.ws_status = "disconnected"
         client._ws_start_task = None
         client.ws_client.connect = AsyncMock(return_value=True)
@@ -397,7 +468,7 @@ class TestXianyuApiClient:
     @pytest.mark.asyncio
     async def test_run_ws_start_updates_status_on_connect_failure(self):
         """测试 _run_ws_start() 连接失败时的状态更新"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         client.ws_client.connect = AsyncMock(return_value=False)
         client.ws_status = "starting"
         
@@ -411,7 +482,7 @@ class TestXianyuApiClient:
     @pytest.mark.asyncio
     async def test_run_ws_start_updates_status_on_timeout(self):
         """测试 _run_ws_start() 超时场景"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         client.ws_client.connect = AsyncMock(return_value=True)
         client.ws_status = "starting"
         
@@ -425,7 +496,7 @@ class TestXianyuApiClient:
     @pytest.mark.asyncio
     async def test_run_ws_start_updates_status_on_exception(self):
         """测试 _run_ws_start() 异常时的状态更新"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         client.ws_client.connect = AsyncMock(side_effect=Exception("Connection error"))
         client.ws_status = "starting"
         
@@ -437,7 +508,7 @@ class TestXianyuApiClient:
     @pytest.mark.asyncio
     async def test_run_ws_start_reports_websocket_internal_init_error(self):
         """测试 WebSocket 内部异步初始化失败时不长期停留 starting。"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         client.ws_status = "starting"
         client.ws_client.connect = AsyncMock(return_value=True)
         client.ws_client.last_error = "accessToken 获取失败"
@@ -453,7 +524,7 @@ class TestXianyuApiClient:
     @pytest.mark.asyncio
     async def test_client_no_longer_has_keepalive(self):
         """验证 keepalive 相关属性和方法已被移除"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         assert not hasattr(client, 'keepalive_service')
         assert not hasattr(client, 'browser_bridge')
         assert not hasattr(client, 'start_keepalive')
@@ -462,7 +533,7 @@ class TestXianyuApiClient:
     @pytest.mark.asyncio
     async def test_get_ws_status_reports_internal_failure(self):
         """测试状态快照能反映 WebSocketClient 内部失败原因。"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         client.ws_status = "starting"
         client.ws_last_error = None
         client.ws_client.last_error = "accessToken 获取失败"
@@ -479,7 +550,7 @@ class TestXianyuApiClient:
     @pytest.mark.asyncio
     async def test_initialize_stops_existing_ws_connection(self):
         """测试 initialize() 停止现有 WebSocket 连接"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         stop_mock = AsyncMock()
         with patch.object(client.ws_client, 'stop', stop_mock):
             with patch.object(type(client.ws_client), 'is_connected', new_callable=PropertyMock) as mock_conn:
@@ -491,7 +562,7 @@ class TestXianyuApiClient:
     @pytest.mark.asyncio
     async def test_initialize_creates_new_ws_client(self):
         """测试 initialize() 创建新的 ws_client"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         old_ws_client = client.ws_client
         
         await client.initialize(cookies={"test": "cookie"}, device_id="test_device")
@@ -501,7 +572,7 @@ class TestXianyuApiClient:
     @pytest.mark.asyncio
     async def test_initialize_cancels_existing_ws_start_task(self):
         """测试 initialize() 会取消未完成的 WS 启动任务，避免旧任务污染新状态。"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         cancelled = asyncio.Event()
 
         async def pending_start():
@@ -523,7 +594,7 @@ class TestXianyuApiClient:
     @pytest.mark.asyncio
     async def test_old_ws_start_task_does_not_update_replaced_ws_client_status(self):
         """测试旧 WS 启动任务绑定旧实例，不会把新实例状态写成 connected。"""
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
         old_ws_client = client.ws_client
         old_ws_client.connect = AsyncMock(return_value=True)
         client.ws_status = "starting"
@@ -540,7 +611,7 @@ class TestXianyuApiClient:
 
     @pytest.mark.asyncio
     async def test_publish_from_item_url_returns_success_with_logs(self):
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
 
         normalized_item = MagicMock()
         normalized_item.source_platform = "xianyu"
@@ -582,7 +653,7 @@ class TestXianyuApiClient:
 
     @pytest.mark.asyncio
     async def test_publish_from_item_url_stops_when_parse_fails(self):
-        client = XianyuApiClient()
+        client = XianyuApiClient("default")
 
         with patch("src.api.client.SourcingService") as mock_service_cls:
             mock_service = mock_service_cls.return_value
@@ -617,7 +688,7 @@ class TestXianyuApiClient:
 
 @pytest.mark.asyncio
 async def test_ensure_ws_started_creates_background_task(monkeypatch):
-    client = XianyuApiClient()
+    client = XianyuApiClient("default")
     client.ws_status = "disconnected"
     client.ws_last_error = None
     client.ws_started_at = None
@@ -636,7 +707,7 @@ async def test_ensure_ws_started_creates_background_task(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_start_ws_listener_uses_ensure_ws_started(monkeypatch):
-    client = XianyuApiClient()
+    client = XianyuApiClient("default")
     client.ensure_ws_started = AsyncMock(
         return_value={"success": True, "status": "starting", "reason": "manual"}
     )
@@ -649,7 +720,7 @@ async def test_start_ws_listener_uses_ensure_ws_started(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stop_ws_listener_marks_status_disconnected(monkeypatch):
-    client = XianyuApiClient()
+    client = XianyuApiClient("default")
     client.ws_status = "connected"
     client.ws_last_error = None
     client.ws_client.stop = AsyncMock()
@@ -663,7 +734,7 @@ async def test_stop_ws_listener_marks_status_disconnected(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_publish_returns_http_failure_when_api_raises():
-    client = XianyuApiClient()
+    client = XianyuApiClient("default")
 
     with patch.object(client.http_client, "publish", new_callable=AsyncMock) as mock_api:
         mock_api.side_effect = Exception("API failed")
@@ -684,7 +755,7 @@ async def test_publish_returns_http_failure_when_api_raises():
 
 @pytest.mark.asyncio
 async def test_refresh_token_returns_http_failure_when_api_raises():
-    client = XianyuApiClient()
+    client = XianyuApiClient("default")
 
     with patch.object(client.http_client, "refresh_token", new_callable=AsyncMock) as mock_api:
         mock_api.side_effect = Exception("API failed")

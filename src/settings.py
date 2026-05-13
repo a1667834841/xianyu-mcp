@@ -149,6 +149,15 @@ def _coerce_int(value: Any, default: int) -> int:
     return _positive_int(value, default)
 
 
+def _validate_user_id(user_id: str) -> str:
+    trimmed = user_id.strip()
+    if not trimmed or trimmed in {".", ".."}:
+        raise ValueError("user_id must be a valid path segment")
+    if "/" in trimmed or "\\" in trimmed:
+        raise ValueError("user_id must be a valid path segment")
+    return trimmed
+
+
 @dataclass(frozen=True)
 class StorageSettings:
     """Storage settings for multi-user data, tokens, and Chrome profiles."""
@@ -325,4 +334,31 @@ def load_settings(config_path: Path | None = None) -> AppSettings:
         keepalive=keepalive_settings,
         search=search_settings,
         messaging=messaging_settings,
+    )
+
+
+def load_settings_for_user(
+    user_id: str,
+    data_root: Path | None = None,
+    config_path: Path | None = None,
+) -> AppSettings:
+    """Load base settings, then derive explicit storage paths for one user."""
+
+    base_settings = load_settings(config_path=config_path)
+    validated_user_id = _validate_user_id(user_id)
+    resolved_data_root = (
+        _expand_path(data_root) if data_root else base_settings.storage.data_root
+    )
+    user_root = resolved_data_root / validated_user_id
+
+    return build_user_settings(
+        user_id=validated_user_id,
+        data_root=resolved_data_root,
+        token_file=user_root / "tokens" / DEFAULT_TOKEN_FILE_NAME,
+        chrome_user_data_dir=user_root / DEFAULT_CHROME_PROFILE,
+        keepalive_enabled=base_settings.keepalive.enabled,
+        keepalive_interval_minutes=base_settings.keepalive.interval_minutes,
+        keepalive_max_captcha_retries=base_settings.keepalive.max_captcha_retries,
+        max_stale_pages=base_settings.search.max_stale_pages,
+        create_conversation_greeting=base_settings.messaging.create_conversation_greeting,
     )

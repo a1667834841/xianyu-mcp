@@ -39,6 +39,8 @@ STRING_ARGUMENT_KEYS = {
     "user_id",
     "item_id",
     "seller_id",
+    "t",
+    "ck",
 }
 
 

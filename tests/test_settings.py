@@ -1,5 +1,8 @@
 import json
+import os
 from pathlib import Path
+
+import pytest
 
 import src.settings as settings_module
 
@@ -9,8 +12,18 @@ from src.settings import (
     DEFAULT_KEEPALIVE_INTERVAL_MINUTES,
     DEFAULT_SEARCH_MAX_STALE_PAGES,
     DEFAULT_USER_ID,
+    build_user_settings,
+    load_settings_for_user,
     load_settings,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clean_xianyu_env(monkeypatch):
+    for key in sorted(os.environ):
+        if key.startswith("XIANYU_"):
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.delenv("XIANFU_CONFIG_PATH", raising=False)
 
 
 def test_keepalive_and_search_env_override_config(tmp_path, monkeypatch):
@@ -328,3 +341,111 @@ def test_load_settings_blank_create_conversation_greeting_falls_back_to_default(
 
     assert env_settings.messaging.create_conversation_greeting == "在吗？"
     assert env_settings.keepalive.max_captcha_retries == DEFAULT_KEEPALIVE_MAX_CAPTCHA_RETRIES
+
+
+def test_load_settings_for_user_derives_paths_from_base_settings(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "storage": {
+                    "data_root": str(tmp_path / "config-root"),
+                    "user_id": "base-user",
+                },
+                "keepalive": {
+                    "enabled": False,
+                    "interval_minutes": 18,
+                    "max_captcha_retries": 5,
+                },
+                "search": {"max_stale_pages": 9},
+                "messaging": {"create_conversation_greeting": "你好"},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings_for_user("target-user", config_path=config_path)
+
+    expected_root = tmp_path / "config-root" / "target-user"
+    assert settings.storage.data_root == tmp_path / "config-root"
+    assert settings.storage.user_id == "target-user"
+    assert settings.storage.token_file == expected_root / "tokens" / "token.json"
+    assert settings.storage.chrome_user_data_dir == expected_root / "chrome-profile"
+    assert settings.keepalive.enabled is False
+    assert settings.keepalive.interval_minutes == 18
+    assert settings.keepalive.max_captcha_retries == 5
+    assert settings.search.max_stale_pages == 9
+    assert settings.messaging.create_conversation_greeting == "你好"
+
+
+def test_load_settings_for_user_prefers_explicit_data_root(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "storage": {
+                    "data_root": str(tmp_path / "config-root"),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings_for_user(
+        "target-user",
+        data_root=tmp_path / "explicit-root",
+        config_path=config_path,
+    )
+
+    expected_root = tmp_path / "explicit-root" / "target-user"
+    assert settings.storage.data_root == tmp_path / "explicit-root"
+    assert settings.storage.user_id == "target-user"
+    assert settings.storage.token_file == expected_root / "tokens" / "token.json"
+    assert settings.storage.chrome_user_data_dir == expected_root / "chrome-profile"
+
+
+@pytest.mark.parametrize(
+    "user_id",
+    ["", "   ", ".", "..", "a/b", "a\\b"],
+)
+def test_load_settings_for_user_rejects_invalid_user_id(tmp_path, user_id):
+    with pytest.raises(ValueError):
+        load_settings_for_user(user_id, data_root=tmp_path)
+
+
+def test_load_settings_for_user_matches_build_user_settings_behavior(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "storage": {
+                    "data_root": str(tmp_path / "config-root"),
+                },
+                "keepalive": {
+                    "enabled": False,
+                    "interval_minutes": 16,
+                    "max_captcha_retries": 4,
+                },
+                "search": {"max_stale_pages": 8},
+                "messaging": {"create_conversation_greeting": "你好，在吗"},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings_for_user("target-user", config_path=config_path)
+    expected = build_user_settings(
+        user_id="target-user",
+        data_root=tmp_path / "config-root",
+        token_file=tmp_path / "config-root" / "target-user" / "tokens" / "token.json",
+        chrome_user_data_dir=tmp_path / "config-root" / "target-user" / "chrome-profile",
+        keepalive_enabled=False,
+        keepalive_interval_minutes=16,
+        keepalive_max_captcha_retries=4,
+        max_stale_pages=8,
+        create_conversation_greeting="你好，在吗",
+    )
+
+    assert settings == expected

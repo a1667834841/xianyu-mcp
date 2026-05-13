@@ -42,6 +42,7 @@ async def test_sourcing_service_publishes_with_selected_price():
     publish_client.publish.assert_awaited_once_with(
         images_paths=["https://img.example/1.jpg"],
         title="测试商品",
+        description="测试描述",
         price={"current_price": 129.0},
     )
     assert result["success"] is True
@@ -83,6 +84,7 @@ async def test_sourcing_service_publishes_with_real_itemdo_detail_shape():
     publish_client.publish.assert_awaited_once_with(
         images_paths=["http://img.example/1.jpg", "http://img.example/2.jpg"],
         title="真实商品标题",
+        description="真实商品描述",
         price={"current_price": 5.4},
     )
     assert result["success"] is True
