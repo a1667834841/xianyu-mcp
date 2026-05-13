@@ -449,3 +449,55 @@ def test_load_settings_for_user_matches_build_user_settings_behavior(tmp_path):
     )
 
     assert settings == expected
+
+
+def test_hook_settings_defaults_to_disabled(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({}))
+
+    settings = load_settings(config_path=config_path)
+
+    assert settings.hook.url_template == ""
+    assert settings.hook.timeout_seconds == 5
+    assert settings.hook.enabled_events == ("message.received",)
+
+
+def test_hook_settings_env_override_config(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({
+        "hook": {
+            "url_template": "http://config.example/{user_id}",
+            "timeout_seconds": 8,
+            "enabled_events": ["message.received"]
+        }
+    }))
+
+    monkeypatch.setenv("XIANYU_HOOK_URL_TEMPLATE", "http://env.example/hooks/{user_id}")
+    monkeypatch.setenv("XIANYU_HOOK_TIMEOUT_SECONDS", "11")
+    monkeypatch.setenv("XIANYU_HOOK_ENABLED_EVENTS", "message.received")
+
+    settings = load_settings(config_path=config_path)
+
+    assert settings.hook.url_template == "http://env.example/hooks/{user_id}"
+    assert settings.hook.timeout_seconds == 11
+    assert settings.hook.enabled_events == ("message.received",)
+
+
+def test_hook_settings_invalid_values_fall_back(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({
+        "hook": {
+            "url_template": 123,
+            "timeout_seconds": 0,
+            "enabled_events": []
+        }
+    }))
+
+    monkeypatch.setenv("XIANYU_HOOK_TIMEOUT_SECONDS", "0")
+    monkeypatch.setenv("XIANYU_HOOK_ENABLED_EVENTS", "")
+
+    settings = load_settings(config_path=config_path)
+
+    assert settings.hook.url_template == ""
+    assert settings.hook.timeout_seconds == 5
+    assert settings.hook.enabled_events == ("message.received",)

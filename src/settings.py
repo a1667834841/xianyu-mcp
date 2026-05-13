@@ -18,6 +18,8 @@ DEFAULT_KEEPALIVE_INTERVAL_MINUTES = 240
 DEFAULT_KEEPALIVE_MAX_CAPTCHA_RETRIES = 3
 DEFAULT_SEARCH_MAX_STALE_PAGES = 3
 DEFAULT_CREATE_CONVERSATION_GREETING = "在吗？"
+DEFAULT_HOOK_TIMEOUT_SECONDS = 5
+DEFAULT_HOOK_ENABLED_EVENTS = ("message.received",)
 
 _TRUE_TOKENS = {"1", "true", "yes", "on"}
 _FALSE_TOKENS = {"0", "false", "no", "off"}
@@ -47,6 +49,18 @@ def _coerce_greeting(value: Any, default: str) -> str:
         return default
     trimmed = value.strip()
     return trimmed or default
+
+
+def _coerce_event_names(value: Any, default: tuple[str, ...]) -> tuple[str, ...]:
+    if isinstance(value, str):
+        items = [item.strip() for item in value.split(",")]
+    elif isinstance(value, list):
+        items = [item.strip() for item in value if isinstance(item, str)]
+    else:
+        return default
+
+    normalized = tuple(item for item in items if item)
+    return normalized or default
 
 
 def _repo_root_config_path() -> Path:
@@ -186,11 +200,19 @@ class MessagingSettings:
 
 
 @dataclass(frozen=True)
+class HookSettings:
+    url_template: str
+    timeout_seconds: int
+    enabled_events: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class AppSettings:
     storage: StorageSettings
     keepalive: KeepaliveSettings
     search: SearchSettings
     messaging: MessagingSettings
+    hook: HookSettings
 
 
 def build_user_settings(
@@ -203,6 +225,9 @@ def build_user_settings(
     keepalive_max_captcha_retries: int = DEFAULT_KEEPALIVE_MAX_CAPTCHA_RETRIES,
     max_stale_pages: int = DEFAULT_SEARCH_MAX_STALE_PAGES,
     create_conversation_greeting: str = DEFAULT_CREATE_CONVERSATION_GREETING,
+    hook_url_template: str = "",
+    hook_timeout_seconds: int = DEFAULT_HOOK_TIMEOUT_SECONDS,
+    hook_enabled_events: tuple[str, ...] = DEFAULT_HOOK_ENABLED_EVENTS,
 ) -> AppSettings:
     return AppSettings(
         storage=StorageSettings(
@@ -222,6 +247,11 @@ def build_user_settings(
                 create_conversation_greeting,
                 DEFAULT_CREATE_CONVERSATION_GREETING,
             )
+        ),
+        hook=HookSettings(
+            url_template=hook_url_template,
+            timeout_seconds=hook_timeout_seconds,
+            enabled_events=hook_enabled_events,
         ),
     )
 
@@ -244,6 +274,7 @@ def load_settings(config_path: Path | None = None) -> AppSettings:
     keepalive_cfg = _section("keepalive")
     search_cfg = _section("search")
     messaging_cfg = _section("messaging")
+    hook_cfg = _section("hook")
 
     env_data_root = os.environ.get("XIANYU_DATA_ROOT")
     config_data_root = _path_value(storage_cfg.get("data_root"))
@@ -319,6 +350,22 @@ def load_settings(config_path: Path | None = None) -> AppSettings:
         ),
     )
 
+    hook_settings = HookSettings(
+        url_template=(
+            os.environ.get("XIANYU_HOOK_URL_TEMPLATE")
+            or _str_value(hook_cfg.get("url_template"))
+            or ""
+        ),
+        timeout_seconds=_env_int(
+            "XIANYU_HOOK_TIMEOUT_SECONDS",
+            _coerce_int(hook_cfg.get("timeout_seconds"), DEFAULT_HOOK_TIMEOUT_SECONDS),
+        ),
+        enabled_events=_coerce_event_names(
+            os.environ.get("XIANYU_HOOK_ENABLED_EVENTS", hook_cfg.get("enabled_events")),
+            DEFAULT_HOOK_ENABLED_EVENTS,
+        ),
+    )
+
     env_greeting = os.environ.get("XIANYU_CREATE_CONVERSATION_GREETING")
     messaging_settings = MessagingSettings(
         create_conversation_greeting=_coerce_greeting(
@@ -333,7 +380,15 @@ def load_settings(config_path: Path | None = None) -> AppSettings:
         storage=storage_settings,
         keepalive=keepalive_settings,
         search=search_settings,
-        messaging=messaging_settings,
+        messaging=MessagingSettings(
+            create_conversation_greeting=_coerce_greeting(
+                env_greeting
+                if env_greeting is not None
+                else messaging_cfg.get("create_conversation_greeting"),
+                DEFAULT_CREATE_CONVERSATION_GREETING,
+            )
+        ),
+        hook=hook_settings,
     )
 
 
