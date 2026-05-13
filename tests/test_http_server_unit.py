@@ -1408,7 +1408,7 @@ async def test_xianyu_add_user_creates_user_after_confirmed_login(monkeypatch):
     assert recorded["runtime_activation"] == {
         "user_id": "new-user",
         "reason": "login_confirmed",
-        "interval_minutes": 10,
+        "interval_minutes": 240,
     }
     assert payload["ws_auto_start"] is True
     assert payload["ws_status"]["status"] == "starting"
@@ -1594,7 +1594,7 @@ async def test_xianyu_add_user_refreshes_existing_user_session_when_user_already
     assert recorded["runtime_activation"] == {
         "user_id": "existing-user",
         "reason": "login_confirmed",
-        "interval_minutes": 10,
+        "interval_minutes": 240,
     }
     assert payload["ws_auto_start"] is True
     assert payload["ws_status"]["status"] == "starting"
