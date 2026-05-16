@@ -8,6 +8,7 @@ import sys
 import json
 import asyncio
 import logging
+import hmac
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from dataclasses import asdict
@@ -41,6 +42,66 @@ _user_manager = None
 _client_manager = None
 _pending_login_manager = None
 _login_poll_task = None
+
+
+def _unauthorized_response() -> JSONResponse:
+    return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+
+def _normalize_headers(headers: Any) -> dict[str, str]:
+    if headers is None:
+        return {}
+    try:
+        items = headers.items()
+    except AttributeError:
+        return {}
+    return {str(key).lower(): str(value) for key, value in items}
+
+
+def _is_request_authorized(headers: Any) -> bool:
+    settings = load_settings()
+    if not settings.mcp.auth_required:
+        return True
+
+    normalized_headers = _normalize_headers(headers)
+    authorization = normalized_headers.get("authorization", "").strip()
+    if not authorization.startswith("Bearer "):
+        return False
+
+    token = authorization[len("Bearer "):].strip()
+    return bool(token) and hmac.compare_digest(token, settings.mcp.auth_token)
+
+
+def _should_enforce_auth(path: str) -> bool:
+    return (
+        path.startswith("/mcp")
+        or path.startswith("/sse")
+        or path.startswith("/messages/")
+        or path.startswith("/rest/")
+    )
+
+
+def _wrap_with_auth(asgi_app):
+    async def guarded(scope, receive, send):
+        if (
+            scope.get("type") == "http"
+            and scope.get("method") != "OPTIONS"
+            and _should_enforce_auth(scope.get("path", ""))
+        ):
+            headers = {
+                key.decode("latin-1"): value.decode("latin-1")
+                for key, value in scope.get("headers", [])
+            }
+            if not _is_request_authorized(headers):
+                response = _unauthorized_response()
+                await response(scope, receive, send)
+                return
+        await asgi_app(scope, receive, send)
+
+    guarded.routes = getattr(asgi_app, "routes", [])
+    guarded.router = getattr(asgi_app, "router", None)
+    guarded.state = getattr(asgi_app, "state", None)
+    return guarded
 
 def get_user_manager():
     global _user_manager
@@ -941,6 +1002,8 @@ def build_app():
     from starlette.middleware.cors import CORSMiddleware
     from starlette.routing import Mount, Route
 
+    load_settings()
+
     middleware = [
         Middleware(
             CORSMiddleware,
@@ -966,7 +1029,7 @@ def build_app():
             await shutdown_manager()
             await asyncio.sleep(0.5)
 
-    return Starlette(
+    app = Starlette(
         routes=(
             rest_routes
             + list(sse_app.routes)
@@ -975,6 +1038,7 @@ def build_app():
         middleware=middleware,
         lifespan=lifespan,
     )
+    return _wrap_with_auth(app)
 
 
 if __name__ == "__main__":

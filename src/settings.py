@@ -20,6 +20,7 @@ DEFAULT_SEARCH_MAX_STALE_PAGES = 3
 DEFAULT_CREATE_CONVERSATION_GREETING = "在吗？"
 DEFAULT_HOOK_TIMEOUT_SECONDS = 5
 DEFAULT_HOOK_ENABLED_EVENTS = ("message.received",)
+DEFAULT_MCP_ENV = "dev"
 
 _TRUE_TOKENS = {"1", "true", "yes", "on"}
 _FALSE_TOKENS = {"0", "false", "no", "off"}
@@ -163,6 +164,17 @@ def _coerce_int(value: Any, default: int) -> int:
     return _positive_int(value, default)
 
 
+def _coerce_env_name(value: Any, default: str = DEFAULT_MCP_ENV) -> str:
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise ValueError("XIANYU_ENV must be either 'dev' or 'prod'")
+    normalized = value.strip().lower()
+    if normalized in {"dev", "prod"}:
+        return normalized
+    raise ValueError("XIANYU_ENV must be either 'dev' or 'prod'")
+
+
 def _validate_user_id(user_id: str) -> str:
     trimmed = user_id.strip()
     if not trimmed or trimmed in {".", ".."}:
@@ -207,12 +219,20 @@ class HookSettings:
 
 
 @dataclass(frozen=True)
+class McpSettings:
+    env: str
+    auth_token: str
+    auth_required: bool
+
+
+@dataclass(frozen=True)
 class AppSettings:
     storage: StorageSettings
     keepalive: KeepaliveSettings
     search: SearchSettings
     messaging: MessagingSettings
     hook: HookSettings
+    mcp: McpSettings
 
 
 def build_user_settings(
@@ -228,7 +248,13 @@ def build_user_settings(
     hook_url_template: str = "",
     hook_timeout_seconds: int = DEFAULT_HOOK_TIMEOUT_SECONDS,
     hook_enabled_events: tuple[str, ...] = DEFAULT_HOOK_ENABLED_EVENTS,
+    mcp_settings: McpSettings | None = None,
 ) -> AppSettings:
+    resolved_mcp_settings = mcp_settings or McpSettings(
+        env=DEFAULT_MCP_ENV,
+        auth_token="",
+        auth_required=False,
+    )
     return AppSettings(
         storage=StorageSettings(
             data_root=data_root,
@@ -253,6 +279,7 @@ def build_user_settings(
             timeout_seconds=hook_timeout_seconds,
             enabled_events=hook_enabled_events,
         ),
+        mcp=resolved_mcp_settings,
     )
 
 
@@ -275,6 +302,12 @@ def load_settings(config_path: Path | None = None) -> AppSettings:
     search_cfg = _section("search")
     messaging_cfg = _section("messaging")
     hook_cfg = _section("hook")
+
+    env_name = _coerce_env_name(os.environ.get("XIANYU_ENV"), DEFAULT_MCP_ENV)
+    mcp_auth_token = (os.environ.get("XIANYU_MCP_AUTH_TOKEN") or "").strip()
+    mcp_auth_required = env_name == "prod"
+    if mcp_auth_required and not mcp_auth_token:
+        raise ValueError("XIANYU_MCP_AUTH_TOKEN is required when XIANYU_ENV=prod")
 
     env_data_root = os.environ.get("XIANYU_DATA_ROOT")
     config_data_root = _path_value(storage_cfg.get("data_root"))
@@ -382,6 +415,11 @@ def load_settings(config_path: Path | None = None) -> AppSettings:
         search=search_settings,
         messaging=messaging_settings,
         hook=hook_settings,
+        mcp=McpSettings(
+            env=env_name,
+            auth_token=mcp_auth_token,
+            auth_required=mcp_auth_required,
+        ),
     )
 
 
@@ -412,4 +450,5 @@ def load_settings_for_user(
         hook_url_template=base_settings.hook.url_template,
         hook_timeout_seconds=base_settings.hook.timeout_seconds,
         hook_enabled_events=base_settings.hook.enabled_events,
+        mcp_settings=base_settings.mcp,
     )

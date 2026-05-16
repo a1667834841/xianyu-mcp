@@ -500,6 +500,55 @@ def test_load_settings_for_user_preserves_hook_settings(tmp_path):
     assert settings.hook.enabled_events == ("message.received", "order.created")
 
 
+def test_load_settings_defaults_to_dev_without_mcp_auth(monkeypatch):
+    monkeypatch.delenv("XIANYU_ENV", raising=False)
+    monkeypatch.delenv("XIANYU_MCP_AUTH_TOKEN", raising=False)
+
+    settings = load_settings()
+
+    assert settings.mcp.env == "dev"
+    assert settings.mcp.auth_required is False
+    assert settings.mcp.auth_token == ""
+
+
+def test_load_settings_prod_requires_auth_token(monkeypatch):
+    monkeypatch.setenv("XIANYU_ENV", "prod")
+    monkeypatch.delenv("XIANYU_MCP_AUTH_TOKEN", raising=False)
+
+    with pytest.raises(ValueError, match="XIANYU_MCP_AUTH_TOKEN"):
+        load_settings()
+
+
+def test_load_settings_prod_accepts_auth_token(monkeypatch):
+    monkeypatch.setenv("XIANYU_ENV", "prod")
+    monkeypatch.setenv("XIANYU_MCP_AUTH_TOKEN", "secret-token")
+
+    settings = load_settings()
+
+    assert settings.mcp.env == "prod"
+    assert settings.mcp.auth_required is True
+    assert settings.mcp.auth_token == "secret-token"
+
+
+def test_load_settings_rejects_invalid_xianyu_env(monkeypatch):
+    monkeypatch.setenv("XIANYU_ENV", "production")
+    monkeypatch.setenv("XIANYU_MCP_AUTH_TOKEN", "secret-token")
+
+    with pytest.raises(ValueError, match="XIANYU_ENV"):
+        load_settings()
+
+
+def test_load_settings_for_user_preserves_mcp_settings(tmp_path, monkeypatch):
+    monkeypatch.setenv("XIANYU_ENV", "prod")
+    monkeypatch.setenv("XIANYU_MCP_AUTH_TOKEN", "secret-token")
+
+    settings = load_settings_for_user("target-user", data_root=tmp_path)
+
+    assert settings.mcp.env == "prod"
+    assert settings.mcp.auth_required is True
+    assert settings.mcp.auth_token == "secret-token"
+
+
 def test_hook_settings_invalid_values_fall_back(tmp_path, monkeypatch):
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps({

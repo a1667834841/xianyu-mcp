@@ -8,6 +8,7 @@ import json
 import logging
 import sys
 import types
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -45,6 +46,19 @@ def _install_fake_mcp(monkeypatch):
 
             return deco
 
+        def sse_app(self):
+            return types.SimpleNamespace(routes=[])
+
+        def streamable_http_app(self):
+            @asynccontextmanager
+            async def lifespan_context(app):
+                yield
+
+            return types.SimpleNamespace(
+                routes=[],
+                router=types.SimpleNamespace(lifespan_context=lifespan_context),
+            )
+
     mcp_server_fastmcp_mod.FastMCP = FastMCP
 
     # Wire module hierarchy (attributes + sys.modules)
@@ -77,6 +91,210 @@ def test_access_token_tool_is_not_exposed(monkeypatch):
     import mcp_server.http_server as http_server
 
     assert not hasattr(http_server, "xianyu_get_access_token")
+
+
+def test_validate_bearer_auth_allows_dev_without_header(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    settings = types.SimpleNamespace(
+        mcp=types.SimpleNamespace(auth_required=False, auth_token="", env="dev")
+    )
+    monkeypatch.setattr(http_server, "load_settings", lambda: settings)
+
+    assert http_server._is_request_authorized(None) is True
+
+
+def test_validate_bearer_auth_rejects_missing_header_in_prod(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    settings = types.SimpleNamespace(
+        mcp=types.SimpleNamespace(auth_required=True, auth_token="secret", env="prod")
+    )
+    monkeypatch.setattr(http_server, "load_settings", lambda: settings)
+
+    assert http_server._is_request_authorized(None) is False
+
+
+def test_validate_bearer_auth_accepts_matching_token(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    settings = types.SimpleNamespace(
+        mcp=types.SimpleNamespace(auth_required=True, auth_token="secret", env="prod")
+    )
+    monkeypatch.setattr(http_server, "load_settings", lambda: settings)
+
+    assert http_server._is_request_authorized({"authorization": "Bearer secret"}) is True
+
+
+def test_validate_bearer_auth_rejects_wrong_scheme_or_token(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    settings = types.SimpleNamespace(
+        mcp=types.SimpleNamespace(auth_required=True, auth_token="secret", env="prod")
+    )
+    monkeypatch.setattr(http_server, "load_settings", lambda: settings)
+
+    assert http_server._is_request_authorized({"authorization": "Basic secret"}) is False
+    assert http_server._is_request_authorized({"authorization": "Bearer wrong"}) is False
+
+
+def test_unauthorized_response_returns_401(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    response = http_server._unauthorized_response()
+
+    assert response.status_code == 401
+    assert json.loads(response.body) == {"error": "Unauthorized"}
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/mcp", True),
+        ("/mcp/session", True),
+        ("/sse", True),
+        ("/sse/events", True),
+        ("/messages/", True),
+        ("/messages/abc", True),
+        ("/rest/login", True),
+        ("/rest/search", True),
+        ("/health", False),
+    ],
+)
+def test_should_enforce_auth_for_mcp_transport_paths(monkeypatch, path, expected):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    assert http_server._should_enforce_auth(path) is expected
+
+
+@pytest.mark.asyncio
+async def test_wrap_with_auth_blocks_unauthorized_mcp_request(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    calls = []
+
+    async def app(scope, receive, send):
+        calls.append("called")
+
+    settings = types.SimpleNamespace(
+        mcp=types.SimpleNamespace(auth_required=True, auth_token="secret", env="prod")
+    )
+    monkeypatch.setattr(http_server, "load_settings", lambda: settings)
+
+    messages = []
+
+    async def send(message):
+        messages.append(message)
+
+    await http_server._wrap_with_auth(app)(
+        {"type": "http", "path": "/mcp", "headers": []},
+        lambda: None,
+        send,
+    )
+
+    assert calls == []
+    assert messages[0]["type"] == "http.response.start"
+    assert messages[0]["status"] == 401
+
+
+@pytest.mark.asyncio
+async def test_wrap_with_auth_allows_authorized_mcp_request(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    calls = []
+
+    async def app(scope, receive, send):
+        calls.append(scope["path"])
+
+    settings = types.SimpleNamespace(
+        mcp=types.SimpleNamespace(auth_required=True, auth_token="secret", env="prod")
+    )
+    monkeypatch.setattr(http_server, "load_settings", lambda: settings)
+
+    await http_server._wrap_with_auth(app)(
+        {
+            "type": "http",
+            "path": "/mcp",
+            "headers": [(b"authorization", b"Bearer secret")],
+        },
+        lambda: None,
+        lambda message: None,
+    )
+
+    assert calls == ["/mcp"]
+
+
+@pytest.mark.asyncio
+async def test_wrap_with_auth_allows_cors_preflight_without_auth(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    calls = []
+
+    async def app(scope, receive, send):
+        calls.append((scope["method"], scope["path"]))
+
+    settings = types.SimpleNamespace(
+        mcp=types.SimpleNamespace(auth_required=True, auth_token="secret", env="prod")
+    )
+    monkeypatch.setattr(http_server, "load_settings", lambda: settings)
+
+    await http_server._wrap_with_auth(app)(
+        {"type": "http", "method": "OPTIONS", "path": "/mcp", "headers": []},
+        lambda: None,
+        lambda message: None,
+    )
+
+    assert calls == [("OPTIONS", "/mcp")]
+
+
+@pytest.mark.asyncio
+async def test_wrap_with_auth_blocks_unauthorized_rest_request(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    import mcp_server.http_server as http_server
+
+    calls = []
+
+    async def app(scope, receive, send):
+        calls.append("called")
+
+    settings = types.SimpleNamespace(
+        mcp=types.SimpleNamespace(auth_required=True, auth_token="secret", env="prod")
+    )
+    monkeypatch.setattr(http_server, "load_settings", lambda: settings)
+
+    messages = []
+
+    async def send(message):
+        messages.append(message)
+
+    await http_server._wrap_with_auth(app)(
+        {"type": "http", "method": "POST", "path": "/rest/search", "headers": []},
+        lambda: None,
+        send,
+    )
+
+    assert calls == []
+    assert messages[0]["status"] == 401
+
+
+def test_build_app_raises_when_prod_auth_token_missing(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+    monkeypatch.setenv("XIANYU_ENV", "prod")
+    monkeypatch.delenv("XIANYU_MCP_AUTH_TOKEN", raising=False)
+
+    import mcp_server.http_server as http_server
+
+    with pytest.raises(ValueError, match="XIANYU_MCP_AUTH_TOKEN"):
+        http_server.build_app()
 
 
 @pytest.mark.asyncio
