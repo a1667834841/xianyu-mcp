@@ -105,6 +105,32 @@ class BrowserBridge:
         self._page = await self._context.new_page()
         return self._page
 
+    async def capture_page_state(self, page=None) -> Dict[str, str]:
+        """抓取页面诊断摘要。"""
+        target = page or self._page
+        if not target:
+            return {"url": "", "title": "", "body_text": ""}
+
+        summary = {"url": "", "title": "", "body_text": ""}
+
+        try:
+            summary["url"] = getattr(target, "url", "") or ""
+        except Exception:
+            pass
+
+        try:
+            summary["title"] = await target.title()
+        except Exception:
+            pass
+
+        try:
+            body = await target.locator("body").inner_text(timeout=5000)
+            summary["body_text"] = body[:2000]
+        except Exception:
+            pass
+
+        return summary
+
     async def _get_websocket_url(self) -> Optional[str]:
         """获取 CDP WebSocket URL"""
         try:
@@ -179,7 +205,7 @@ class BrowserBridge:
         await self._context.add_cookies(payload)
         logger.info(f"[BrowserBridge] 已向浏览器上下文注入 {len(payload)} 个 cookies")
 
-    async def close_page(self, page=None):
+    async def close_page(self, page=None, reset_to_blank: bool = True):
         """释放页面资源，但不关闭远端共享浏览器。
         
         Args:
@@ -192,7 +218,7 @@ class BrowserBridge:
             return
 
         try:
-            if target.url != "about:blank":
+            if reset_to_blank and target.url != "about:blank":
                 await target.goto("about:blank", timeout=5000)
         except Exception as e:
             logger.warning(f"[BrowserBridge] 关闭页面失败: {e}")
