@@ -50,6 +50,10 @@ class ClientManager:
             session = await client.check_session()
             if session.get("valid"):
                 await client.refresh_token()
+                ws_status = client.get_ws_status()
+                if not ws_status.get("connected"):
+                    logger.info("[Keepalive] WebSocket 未连接，尝试重连 user=%s", user_id)
+                    await client.ensure_ws_started(reason="keepalive")
                 self._user_manager.update_user(
                     user_id,
                     status="active",

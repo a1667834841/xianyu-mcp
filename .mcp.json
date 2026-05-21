@@ -1,7 +1,10 @@
 {
   "mcpServers": {
     "xianyu": {
-      "url": "http://localhost:8080/sse"
+      "url": "http://localhost:8080/sse",
+      "headers": {
+        "Authorization": "Bearer ggball0227"
+      }
     }
   }
 }

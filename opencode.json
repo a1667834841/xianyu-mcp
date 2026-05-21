@@ -4,6 +4,9 @@
     "xianyu": {
       "type": "remote",
       "url": "http://127.0.0.1:8080/sse",
+      "headers": {
+        "Authorization": "Bearer ggball0227"
+      },
       "enabled": true
     }
   }
